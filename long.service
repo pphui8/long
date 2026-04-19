@@ -11,8 +11,9 @@ WorkingDirectory=/code
 ExecStart=/code/long
 Restart=always
 RestartSec=5
-# Optional: environment variables
-# Environment=GIN_MODE=release
+# environment variables
+Environment=GIN_MODE=release
+Environment=GEMINI_API=
 
 [Install]
 WantedBy=multi-user.target
