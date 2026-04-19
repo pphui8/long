@@ -1,7 +1,4 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
-name: Go
+name: Deploy Long App
 
 on:
   push:
@@ -11,8 +8,8 @@ on:
 
 jobs:
 
-  build-and-deploy:
-    runs-on: debain-13.4
+  deploy:
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v4
 
@@ -21,30 +18,16 @@ jobs:
       with:
         go-version: '1.26.2'
 
-    - name: Build
-      run: go build -v -o app-binary main.go
+    - name: Build binary
+      run: go build -v -o long-app main.go
 
-    # - name: Test
-    #   run: go test -v ./...
+    - name: Ensure app directory exists
+      run: mkdir -p $HOME/app
 
-    # - name: Deploy to Lightsail
-    #   uses: appleboy/scp-action@v0.1.7
-    #   with:
-    #     host: ${{ secrets.LIGHTSAIL_HOST }}
-    #     username: ${{ secrets.LIGHTSAIL_USERNAME }}
-    #     key: ${{ secrets.LIGHTSAIL_KEY }}
-    #     source: "app-binary"
-    #     target: "/code/"
+    - name: Deploy to app directory
+      run: |
+        cp long-app $HOME/app/long-app
+        chmod +x $HOME/app/long-app
 
-    # - name: Restart Application
-    #   uses: appleboy/ssh-action@v1.0.3
-    #   with:
-    #     host: ${{ secrets.LIGHTSAIL_HOST }}
-    #     username: ${{ secrets.LIGHTSAIL_USERNAME }}
-    #     key: ${{ secrets.LIGHTSAIL_KEY }}
-    #     script: |
-    #       chmod +x ~/deploy/app-binary
-    #       # Note: This is a basic restart logic. 
-    #       # If you use systemd, replace with: sudo systemctl restart your-service-name
-    #       pkill app-binary || true
-    #       nohup ~/deploy/app-binary > ~/deploy/app.log 2>&1 &
+    - name: Restart systemd service
+      run: sudo systemctl restart long.service
