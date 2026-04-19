@@ -1,4 +1,7 @@
-name: Deploy Long App
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
 
 on:
   push:
@@ -7,27 +10,29 @@ on:
     branches: [ "main" ]
 
 jobs:
-
-  deploy:
-    runs-on: self-hosted
+  build-and-deploy:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      build-and-deploy:
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.26.2'
+        - name: Set up Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: '1.26.2'
 
-    - name: Build binary
-      run: go build -v -o long-app main.go
+        - name: Build Binary
+          run: |
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o github.com/pphui8/long main.go
 
-    - name: Ensure app directory exists
-      run: mkdir -p $HOME/app
-
-    - name: Deploy to app directory
-      run: |
-        cp long-app $HOME/app/long-app
-        chmod +x $HOME/app/long-app
-
-    - name: Restart systemd service
-      run: sudo systemctl restart long.service
+        - name: Copy binary to Server
+          uses: appleboy/scp-action@v0.1.7
+          with:
+            host: ${{ secrets.HOST }}
+            username: ${{ secrets.USERNAME }}
+            key: ${{ secrets.SSH_KEY }}
+            source: "github.com/pphui8/long"
+            target: "/code/"
