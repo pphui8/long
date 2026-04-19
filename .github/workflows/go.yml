@@ -33,3 +33,12 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           source: "github.com/pphui8/long"
           target: "/code/"
+
+      - name: Restart systemd service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            sudo systemctl restart long.service
