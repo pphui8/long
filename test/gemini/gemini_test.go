@@ -2,7 +2,6 @@ package gemini
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 
@@ -33,7 +32,7 @@ func TestGeminiAPI(t *testing.T) {
 	for _, cand := range resp.Candidates {
 		if cand.Content != nil {
 			for _, part := range cand.Content.Parts {
-				fmt.Printf("Response: %v\n", part)
+				t.Logf("Response: %v\n", part)
 			}
 		}
 	}
