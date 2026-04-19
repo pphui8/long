@@ -23,7 +23,7 @@ jobs:
 
       - name: Build Binary
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o github.com/pphui8/long main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o long main.go
 
       - name: Copy binary to Server
         uses: appleboy/scp-action@v0.1.7
@@ -31,7 +31,7 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
-          source: "github.com/pphui8/long"
+          source: "long"
           target: "/code/"
 
       - name: Restart systemd service
@@ -41,4 +41,5 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script: |
+            sudo chmod +x /code/long
             sudo systemctl restart long.service
