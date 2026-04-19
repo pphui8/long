@@ -34,9 +34,19 @@ echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh
 echo 'export GOPATH=$HOME/go' >> $HOME/.bashrc
 echo 'export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin' >> $HOME/.bashrc
 
-# 5. Cleanup
+# 5. Install and configure Nginx
+sudo apt install -y nginx
+sudo systemctl enable nginx
+sudo systemctl start nginx
+
+# 6. Install Certbot for SSL certificates
+sudo apt install -y certbot python3-certbot-nginx
+
+# 999. Cleanup
 rm node-$NODE_VERSION-$DISTRO.tar.xz
 rm go$GO_VERSION.linux-amd64.tar.gz
 
 echo "--- Setup Complete ---"
 echo "Please run: 'source ~/.bashrc' to refresh your current session."
+
+sudo certbot --nginx -d pphui8.com -d llm.pphui8.com
