@@ -78,14 +78,11 @@ jobs:
             docker run -d \
               --name long \
               --restart always \
-              -p 8080:8080 \
+              -p 9000:9000 \
               -e GIN_MODE=release \
               -e GEMINI_API="$GEMINI_API" \
               ghcr.io/${{ github.repository }}:latest
-            
-            # Optional: disable the old systemd service if it's still running
-            sudo systemctl stop long.service || true
-            sudo systemctl disable long.service || true
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API: ${{ secrets.GEMINI_API }}
