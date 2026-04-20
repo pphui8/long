@@ -14,5 +14,5 @@ COPY --from=builder /app/long /app/long
 RUN apk --no-cache add ca-certificates
 # Optional: if you need logs directory, create it
 # RUN mkdir -p /app/log/logs
-EXPOSE 9000
+EXPOSE 9001
 CMD ["/app/long"]
