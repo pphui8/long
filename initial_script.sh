@@ -5,9 +5,46 @@ echo "--- Starting Environment Setup for Debian 13.3 ---"
 
 # 1. Update system packages
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl wget git build-essential ca-certificates
+sudo apt install -y curl wget git build-essential ca-certificates gnupg lsb-release
 
-# 2. Install Node.js v22.17.0
+# 2. Install Docker
+echo "Installing Docker..."
+# Add Docker's official GPG key:
+sudo install -m 0.755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+# Add the repository to Apt sources:
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+
+# Install Docker packages:
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 3. Configure Docker
+echo "Configuring Docker..."
+# Add current user to docker group
+sudo usermod -aG docker $USER
+# Enable Docker on boot
+sudo systemctl enable docker
+sudo systemctl start docker
+
+# Configure Log Rotation
+sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+EOF'
+sudo systemctl restart docker
+
+# 4. Install Node.js v22.17.0
 # We use the official binary distribution for a specific version match
 echo "Installing Node.js v22.17.0..."
 NODE_VERSION="v22.17.0"
