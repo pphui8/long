@@ -70,15 +70,18 @@ jobs:
             # Pull the latest image
             docker pull ghcr.io/${{ github.repository }}:latest
             
+            # Create the 'long' network if it doesn't exist
+            docker network inspect long >/dev/null 2>&1 || docker network create long
+            
             # Stop and remove existing container if it exists
             docker stop long || true
             docker rm long || true
             
-            # Run the new container
+            # Run the new container joining the 'long' network
             docker run -d \
               --name long \
               --restart always \
-              -p 9001:9001 \
+              --network long \
               -e GIN_MODE=release \
               -e GEMINI_API="$GEMINI_API" \
               ghcr.io/${{ github.repository }}:latest
