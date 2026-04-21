@@ -17,13 +17,16 @@ func main() {
 
 	r := gin.Default()
 
-	// Simple ping endpoint to test logging
-	r.GET("/ping", func(c *gin.Context) {
-		logger.Log.Info("Ping received", zap.String("client", c.ClientIP()))
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
+	api := r.Group("/api")
+	{
+		// Simple ping endpoint to test logging
+		api.GET("/ping", func(c *gin.Context) {
+			logger.Log.Info("Ping received", zap.String("client", c.ClientIP()))
+			c.JSON(http.StatusOK, gin.H{
+				"message": "pong",
+			})
 		})
-	})
+	}
 
 	// starts the business logic
 
