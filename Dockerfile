@@ -12,6 +12,7 @@ WORKDIR /app
 COPY --from=builder /app/long /app/long
 # Ensure we have CA certificates for TLS (common in Go apps)
 RUN apk --no-cache add ca-certificates
-# Optional: if you need logs directory, create it
+EXPOSE 9001
+
 # RUN mkdir -p /app/log/logs
 CMD ["/app/long"]
