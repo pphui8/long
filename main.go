@@ -16,18 +16,12 @@ func main() {
 	logger.Log.Info("Starting Gin Web Server", zap.String("port", "9000"))
 
 	r := gin.Default()
-
-	api := r.Group("/api")
-	{
-		// Simple ping endpoint to test logging
-		api.GET("/ping", func(c *gin.Context) {
-			logger.Log.Info("Ping received", zap.String("client", c.ClientIP()))
-			c.JSON(http.StatusOK, gin.H{
-				"message": "pong",
-			})
+	r.GET("/ping", func(c *gin.Context) {
+		logger.Log.Info("Ping received", zap.String("client", c.ClientIP()))
+		c.JSON(http.StatusOK, gin.H{
+			"message": "pong",
 		})
-	}
-
+	})
 	// starts the business logic
 
 	r.Run(":9001")
