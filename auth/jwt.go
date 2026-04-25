@@ -8,11 +8,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var SecretKey = []byte("your-very-secure-secret-key-change-this-in-production")
+var SecretKey = []byte("123456")
 
 const (
-	Issuer         = "long-server"
-	AccessAudience = "long-api"
+	Issuer          = "long-server"
+	AccessAudience  = "long-api"
 	RefreshAudience = "long-refresh"
 )
 
