@@ -2,12 +2,19 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var SecretKey = []byte("asaosjubkiabvaskdndvladnvlkjasndlvkjandk")
+var SecretKey = []byte("your-very-secure-secret-key-change-this-in-production")
+
+const (
+	Issuer         = "long-server"
+	AccessAudience = "long-api"
+	RefreshAudience = "long-refresh"
+)
 
 type Claims struct {
 	Username string `json:"username"`
@@ -22,6 +29,9 @@ func GenerateAccessToken(username string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    Issuer,
+			Audience:  []string{AccessAudience},
+			ID:        fmt.Sprintf("access-%s-%d", username, time.Now().UnixNano()),
 		},
 	}
 
@@ -29,26 +39,34 @@ func GenerateAccessToken(username string) (string, error) {
 	return token.SignedString(SecretKey)
 }
 
-func GenerateRefreshToken(username string) (string, error) {
+func GenerateRefreshToken(username string) (string, string, error) {
 	expirationTime := time.Now().Add(7 * 24 * time.Hour)
+	jti := fmt.Sprintf("refresh-%s-%d", username, time.Now().UnixNano())
 	claims := &Claims{
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			ID:        time.Now().Format(time.RFC3339Nano), // Use nanoseconds for uniqueness in JTI
+			Issuer:    Issuer,
+			Audience:  []string{RefreshAudience},
+			ID:        jti,
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(SecretKey)
+	signedToken, err := token.SignedString(SecretKey)
+	return signedToken, jti, err
 }
 
-func ValidateToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+func ValidateToken(tokenString string, expectedAudience string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
+		// Mandatory Algorithm Whitelisting
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return SecretKey, nil
-	})
+	}, jwt.WithIssuer(Issuer), jwt.WithAudience(expectedAudience))
 
 	if err != nil {
 		return nil, err

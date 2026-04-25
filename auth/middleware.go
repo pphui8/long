@@ -23,9 +23,9 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		claims, err := ValidateToken(parts[1])
+		claims, err := ValidateToken(parts[1], AccessAudience)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired access token"})
 			c.Abort()
 			return
 		}

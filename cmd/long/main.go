@@ -1,13 +1,12 @@
 package main
 
 import (
-	"github.com/pphui8/long/router"
 	"github.com/pphui8/long/logger"
+	"github.com/pphui8/long/router"
 	"go.uber.org/zap"
 )
 
 func main() {
-	// Initialize logger with daily-rotating log file
 	logger.Init("log/logs/app.log")
 	defer logger.Sync()
 
