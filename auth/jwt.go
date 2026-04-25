@@ -37,6 +37,7 @@ func GenerateRefreshToken(username string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
+			ID:        time.Now().Format(time.RFC3339Nano), // Use nanoseconds for uniqueness in JTI
 		},
 	}
 
