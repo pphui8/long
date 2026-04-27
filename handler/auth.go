@@ -32,7 +32,10 @@ func HandleLogin(c *gin.Context) {
 		auth.GlobalTokenStore.RegisterToken(req.Username, jti)
 
 		// Set Refresh Token in HttpOnly cookie
-		c.SetCookie("refresh_token", refreshToken, 7*24*3600, "/refresh", "", true, true)
+		// Determine if we should set Secure flag based on request
+		secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+		c.SetSameSite(http.SameSiteLaxMode)
+		c.SetCookie("refresh_token", refreshToken, 7*24*3600, "/", "", secure, true)
 
 		c.JSON(http.StatusOK, gin.H{
 			"access_token": accessToken,
@@ -93,7 +96,9 @@ func HandleRefresh(c *gin.Context) {
 	auth.GlobalTokenStore.RegisterToken(claims.Username, newJti)
 
 	// 6. Set the new Refresh Token cookie
-	c.SetCookie("refresh_token", newRefreshToken, 7*24*3600, "/refresh", "", true, true)
+	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("refresh_token", newRefreshToken, 7*24*3600, "/", "", secure, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"access_token": newAccessToken,
