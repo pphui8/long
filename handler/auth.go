@@ -29,7 +29,7 @@ func HandleLogin(c *gin.Context) {
 		}
 
 		// Register the token in our store for rotation tracking
-		auth.GlobalTokenStore.RegisterToken(req.Username, jti)
+		auth.GlobalTokenStore.RegisterToken(c, req.Username, jti)
 
 		// Set Refresh Token in HttpOnly cookie
 		// Determine if we should set Secure flag based on request
@@ -60,15 +60,15 @@ func HandleRefresh(c *gin.Context) {
 
 	// Refresh Token Rotation Logic
 	// 1. Check if this token was already revoked (reused)
-	if auth.GlobalTokenStore.IsRevoked(claims.ID) {
+	if auth.GlobalTokenStore.IsRevoked(c, claims.ID) {
 		// Potential reuse attack! Invalidate all sessions for this user.
-		auth.GlobalTokenStore.InvalidateUserSessions(claims.Username)
+		auth.GlobalTokenStore.InvalidateUserSessions(c, claims.Username)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token reuse detected. All sessions invalidated."})
 		return
 	}
 
 	// 2. Check if this is still the active token for the user
-	activeJti := auth.GlobalTokenStore.GetActiveToken(claims.Username)
+	activeJti := auth.GlobalTokenStore.GetActiveToken(c, claims.Username)
 	if activeJti != claims.ID {
 		// This token is not the latest one, but it wasn't explicitly revoked.
 		// In a rotation scenario, this should also be treated as a risk if it's not the active one.
@@ -77,7 +77,7 @@ func HandleRefresh(c *gin.Context) {
 	}
 
 	// 3. Mark the current token as used (revoked)
-	auth.GlobalTokenStore.RevokeToken(claims.ID)
+	auth.GlobalTokenStore.RevokeToken(c, claims.ID)
 
 	// 4. Generate new pair
 	newAccessToken, err := auth.GenerateAccessToken(claims.Username)
@@ -93,7 +93,7 @@ func HandleRefresh(c *gin.Context) {
 	}
 
 	// 5. Register the new token
-	auth.GlobalTokenStore.RegisterToken(claims.Username, newJti)
+	auth.GlobalTokenStore.RegisterToken(c, claims.Username, newJti)
 
 	// 6. Set the new Refresh Token cookie
 	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
