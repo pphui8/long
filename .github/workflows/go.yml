@@ -80,8 +80,9 @@ jobs:
               -p 9001:9001 \
               -e GIN_MODE=release \
               -e GEMINI_API="$GEMINI_API" \
+              -e JWT_KEY="$JWT_KEY" \
               ghcr.io/${{ github.repository }}:latest
 
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API: ${{ secrets.GEMINI_API }}
+          JWT_KEY: ${{ secrets.JWT_KEY }}

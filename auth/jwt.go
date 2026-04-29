@@ -3,12 +3,21 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/pphui8/long/logger"
 )
 
-var SecretKey = []byte("123456")
+var SecretKey = func() []byte {
+	key := os.Getenv("JWT_KEY")
+	if key == "" {
+		logger.Log.Warn("JWT_KEY environment variable not set, using random key.")
+		return []byte(fmt.Sprintf("random-key-%d", time.Now().UnixNano()))
+	}
+	return []byte(key)
+}()
 
 const (
 	Issuer          = "long-server"
