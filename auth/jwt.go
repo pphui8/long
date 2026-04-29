@@ -7,15 +7,12 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/pphui8/long/logger"
-	"go.uber.org/zap"
 )
 
 var SecretKey = func() []byte {
 	key := os.Getenv("JWT_KEY")
 	if key == "" {
-		logger.Log.Warn("JWT_KEY environment variable not set, using random key.", zap.String("key", key))
-		return []byte(fmt.Sprintf("random-key-%d", time.Now().UnixNano()))
+		return fmt.Appendf(nil, "random-key-%d", time.Now().UnixNano())
 	}
 	return []byte(key)
 }()
