@@ -4,10 +4,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pphui8/long/auth"
 	"github.com/pphui8/long/handler"
+	"github.com/pphui8/long/logger"
 )
 
 func Setup() *gin.Engine {
-	r := gin.Default()
+	r := gin.New() // Use New() to avoid default middleware
+	r.Use(logger.GinLogger(), gin.Recovery())
 
 	// CORS middleware
 	r.Use(CORSMiddleware())

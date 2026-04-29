@@ -3,7 +3,9 @@ package logger
 import (
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -40,5 +42,35 @@ func Init(logPath string) {
 func Sync() {
 	if Log != nil {
 		_ = Log.Sync()
+	}
+}
+
+// GinLogger is a middleware that logs HTTP requests using Zap.
+func GinLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		query := c.Request.URL.RawQuery
+
+		c.Next()
+
+		latency := time.Since(start)
+		status := c.Writer.Status()
+
+		if len(c.Errors) > 0 {
+			for _, e := range c.Errors.Errors() {
+				Log.Error("Gin Error", zap.String("error", e))
+			}
+		} else {
+			Log.Info("Access Log",
+				zap.Int("status", status),
+				zap.String("method", c.Request.Method),
+				zap.String("path", path),
+				zap.String("query", query),
+				zap.String("ip", c.ClientIP()),
+				zap.String("user-agent", c.Request.UserAgent()),
+				zap.Duration("latency", latency),
+			)
+		}
 	}
 }
