@@ -81,3 +81,7 @@ func (s *TokenStore) GetActiveToken(ctx context.Context, username string) string
 	}
 	return val
 }
+
+func (s *TokenStore) Ping(ctx context.Context) error {
+	return s.client.Ping(ctx).Err()
+}
