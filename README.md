@@ -1,2 +1,2 @@
 # long
-LLM implemetation for a specialized LLM-for-law chatbot
+LLM implemetation for a specialized chatbot
