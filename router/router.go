@@ -8,7 +8,7 @@ import (
 )
 
 func Setup() *gin.Engine {
-	r := gin.New() // Use New() to avoid default middleware
+	r := gin.New()
 	r.Use(logger.GinLogger(), gin.Recovery())
 
 	// CORS middleware
