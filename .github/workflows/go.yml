@@ -79,10 +79,10 @@ jobs:
               --restart always \
               -p 9001:9001 \
               -e GIN_MODE=release \
-              -e GEMINI_API="$GEMINI_API" \
+              -e GEMINI_API_KEY="$GEMINI_API" \
               -e JWT_KEY="$JWT_KEY" \
               ghcr.io/${{ github.repository }}:latest
 
         env:
-          GEMINI_API: ${{ secrets.GEMINI_API }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API }}
           JWT_KEY: ${{ secrets.JWT_KEY }}

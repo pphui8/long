@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"database/sql"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pphui8/long/auth"
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/logger"
+	"github.com/pphui8/long/repository"
 	"go.uber.org/zap"
 )
 
@@ -20,41 +22,58 @@ func HandleLogin(c *gin.Context) {
 
 	logger.Log.Info("APP: Processing login request", zap.String("username", req.Username))
 
-	if req.Username == "admin" && req.Password == "password123" {
-		accessToken, err := auth.GenerateAccessToken(req.Username)
+	userRepo := repository.NewUserRepository(auth.DB)
+	user, err := userRepo.GetByUsername(c, req.Username)
+
+	if err == nil {
+		match, err := auth.VerifyPassword(req.Password, user.PasswordHash, user.Salt)
 		if err != nil {
-			logger.Log.Error("APP: Failed to generate access token", zap.String("username", req.Username), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate access token"})
+			logger.Log.Error("APP: Error verifying password", zap.String("username", req.Username), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 			return
 		}
 
-		refreshToken, jti, err := auth.GenerateRefreshToken(req.Username)
-		if err != nil {
-			logger.Log.Error("APP: Failed to generate refresh token", zap.String("username", req.Username), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
+		if match {
+			accessToken, err := auth.GenerateAccessToken(req.Username)
+			if err != nil {
+				logger.Log.Error("APP: Failed to generate access token", zap.String("username", req.Username), zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate access token"})
+				return
+			}
+
+			refreshToken, jti, err := auth.GenerateRefreshToken(req.Username)
+			if err != nil {
+				logger.Log.Error("APP: Failed to generate refresh token", zap.String("username", req.Username), zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
+				return
+			}
+
+			// Register the token in our store for rotation tracking
+			if err := auth.GlobalTokenStore.RegisterToken(c, req.Username, jti); err != nil {
+				// Even if registration fails, we might still want to proceed, or fail fast.
+				// Let's log it.
+				logger.Log.Error("APP: Failed to register token in store", zap.String("username", req.Username), zap.Error(err))
+			}
+
+			// Set Refresh Token in HttpOnly cookie
+			secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+			c.SetSameSite(http.SameSiteLaxMode)
+			c.SetCookie("refresh_token", refreshToken, 7*24*3600, "/", "", secure, true)
+
+			logger.Log.Info("APP: Login successful", zap.String("username", req.Username))
+			c.JSON(http.StatusOK, gin.H{
+				"access_token": accessToken,
+			})
 			return
 		}
-
-		// Register the token in our store for rotation tracking
-		if err := auth.GlobalTokenStore.RegisterToken(c, req.Username, jti); err != nil {
-			// Even if registration fails, we might still want to proceed, or fail fast.
-			// Let's log it.
-			logger.Log.Error("APP: Failed to register token in store", zap.String("username", req.Username), zap.Error(err))
-		}
-
-		// Set Refresh Token in HttpOnly cookie
-		secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
-		c.SetSameSite(http.SameSiteLaxMode)
-		c.SetCookie("refresh_token", refreshToken, 7*24*3600, "/", "", secure, true)
-
-		logger.Log.Info("APP: Login successful", zap.String("username", req.Username))
-		c.JSON(http.StatusOK, gin.H{
-			"access_token": accessToken,
-		})
-	} else {
-		logger.Log.Warn("APP: Invalid login attempt", zap.String("username", req.Username))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+	} else if err != sql.ErrNoRows {
+		logger.Log.Error("APP: Database error during login", zap.String("username", req.Username), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
 	}
+
+	logger.Log.Warn("APP: Invalid login attempt", zap.String("username", req.Username))
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 }
 
 func HandleRefresh(c *gin.Context) {
