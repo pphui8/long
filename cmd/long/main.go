@@ -23,6 +23,7 @@ func main() {
 	redisAddr := config.Redis.Host + ":" + strconv.Itoa(config.Redis.Port)
 
 	auth.InitRedis(redisAddr, "", 0)
+	logger.Log.Info("Initializing Database connection")
 	auth.InitDB(config.Postgres)
 
 	logger.Log.Info("Starting Gin Web Server", zap.String("port", strconv.Itoa(config.App.Port)), zap.String("redis", redisAddr))

@@ -21,9 +21,9 @@ func InitDB(cfg domain.PostgresConfig) {
 	}
 
 	if err := db.Ping(); err != nil {
-		logger.Log.Fatal("Failed to ping database", zap.Error(err))
+		logger.Log.Fatal("Failed to ping database", zap.Error(err), zap.String("host", cfg.Host), zap.Int("port", cfg.Port))
 	}
 
-	logger.Log.Info("Connected to PostgreSQL database", zap.String("dbname", cfg.DBName))
+	logger.Log.Info("SUCCESS: Connected to PostgreSQL database", zap.String("host", cfg.Host), zap.String("dbname", cfg.DBName))
 	DB = db
 }
