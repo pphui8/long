@@ -15,5 +15,4 @@ COPY env.yaml /app/env.yaml
 RUN apk --no-cache add ca-certificates
 EXPOSE 9001
 
-# RUN mkdir -p /app/log/logs
 CMD ["/app/long"]
