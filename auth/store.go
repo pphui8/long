@@ -57,7 +57,7 @@ func (s *TokenStore) IsRevoked(ctx context.Context, jti string) bool {
 
 func (s *TokenStore) RegisterToken(ctx context.Context, username string, jti string) error {
 	logger.Log.Debug("DAO: Registering token", zap.String("username", username), zap.String("jti", jti))
-	err := s.client.Set(ctx, "active:"+username, jti, 7*24*time.Hour).Err()
+	err := s.client.Set(ctx, "active:"+username, jti, 30*24*time.Hour).Err()
 	if err != nil {
 		logger.Log.Error("DAO Error: Failed to register token", zap.String("username", username), zap.Error(err))
 	}

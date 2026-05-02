@@ -29,6 +29,14 @@ The system is designed as a distributed application with a clear separation betw
 
 The backend is built using Golang, following a layered architecture for maintainability and scalability.
 
+### Authentication & Security
+
+The system uses JWT-based authentication with the following token lifecycle:
+- **Access Token**: Valid for **30 minutes**. Used for authenticating all protected API requests.
+- **Refresh Token**: Valid for **30 days**. Used to obtain new access tokens.
+- **Token Rotation**: Every time a refresh token is used, a new pair of access and refresh tokens is issued, and the old refresh token is invalidated.
+- **Storage**: Refresh tokens are tracked in Redis to support immediate revocation and prevent reuse of rotated tokens.
+
 ### Package Structure
 
 | Package | Responsibility |

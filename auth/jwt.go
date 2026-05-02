@@ -29,7 +29,7 @@ type Claims struct {
 }
 
 func GenerateAccessToken(username string) (string, error) {
-	expirationTime := time.Now().Add(15 * time.Minute)
+	expirationTime := time.Now().Add(30 * time.Minute)
 	claims := &Claims{
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -47,7 +47,7 @@ func GenerateAccessToken(username string) (string, error) {
 }
 
 func GenerateRefreshToken(username string) (string, string, error) {
-	expirationTime := time.Now().Add(7 * 24 * time.Hour)
+	expirationTime := time.Now().Add(30 * 24 * time.Hour)
 	jti := fmt.Sprintf("refresh-%s-%d", username, time.Now().UnixNano())
 	claims := &Claims{
 		Username: username,
