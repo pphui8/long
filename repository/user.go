@@ -21,8 +21,8 @@ func NewUserRepository(db *sql.DB) UserRepository {
 
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	var user domain.User
-	query := "SELECT username, password_hash, salt FROM users WHERE username = $1"
-	err := r.db.QueryRowContext(ctx, query, username).Scan(&user.Username, &user.PasswordHash, &user.Salt)
+	query := "SELECT username, password_hash FROM users WHERE username = $1"
+	err := r.db.QueryRowContext(ctx, query, username).Scan(&user.Username, &user.PasswordHash)
 	if err != nil {
 		return nil, err
 	}

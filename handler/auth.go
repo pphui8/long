@@ -26,7 +26,7 @@ func HandleLogin(c *gin.Context) {
 	user, err := userRepo.GetByUsername(c, req.Username)
 
 	if err == nil {
-		match, err := auth.VerifyPassword(req.Password, user.PasswordHash, user.Salt)
+		match, err := auth.VerifyPassword(req.Password, user.PasswordHash)
 		if err != nil {
 			logger.Log.Error("APP: Error verifying password", zap.String("username", req.Username), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})

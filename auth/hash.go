@@ -1,46 +1,36 @@
 package auth
 
 import (
-	"crypto/rand"
-	"crypto/subtle"
-	"encoding/base64"
-	"golang.org/x/crypto/argon2"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+
+	"github.com/pphui8/long/logger"
+	"go.uber.org/zap"
 )
 
-// Argon2 parameters
-const (
-	argonTime    = 1
-	argonMemory  = 64 * 1024
-	argonThreads = 4
-	argonKeyLen  = 32
-	argonSaltLen = 16
-)
-
-// HashPassword generates an Argon2id hash of the password using a random salt.
-func HashPassword(password string) (hash string, salt string, err error) {
-	s := make([]byte, argonSaltLen)
-	if _, err := rand.Read(s); err != nil {
-		return "", "", err
+var HashKey = func() []byte {
+	key := os.Getenv("HASH_KEY")
+	if key == "" {
+		logger.Log.Error("Failed to load HASH_KEY from environment variables", zap.String("HASH_KEY", key))
+		return []byte("default-hash-key")
 	}
+	return []byte(key)
+}()
 
-	h := argon2.IDKey([]byte(password), s, argonTime, argonMemory, argonThreads, argonKeyLen)
-
-	return base64.RawStdEncoding.EncodeToString(h), base64.RawStdEncoding.EncodeToString(s), nil
+// HashPassword generates an HMAC-SHA256 hash of the password using the global HashKey.
+func HashPassword(password string) (string, error) {
+	h := hmac.New(sha256.New, HashKey)
+	h.Write([]byte(password))
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// VerifyPassword compares a password with a hash and salt.
-func VerifyPassword(password, hash, salt string) (bool, error) {
-	h, err := base64.RawStdEncoding.DecodeString(hash)
+// VerifyPassword compares a password with a hash.
+func VerifyPassword(password, hash string) (bool, error) {
+	expectedHash, err := HashPassword(password)
 	if err != nil {
 		return false, err
 	}
-
-	s, err := base64.RawStdEncoding.DecodeString(salt)
-	if err != nil {
-		return false, err
-	}
-
-	comparisonHash := argon2.IDKey([]byte(password), s, argonTime, argonMemory, argonThreads, argonKeyLen)
-
-	return subtle.ConstantTimeCompare(h, comparisonHash) == 1, nil
+	return hmac.Equal([]byte(hash), []byte(expectedHash)), nil
 }

@@ -8,5 +8,4 @@ type LoginRequest struct {
 type User struct {
 	Username     string
 	PasswordHash string
-	Salt         string
 }
