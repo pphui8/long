@@ -79,6 +79,7 @@ jobs:
               --name long \
               --restart always \
               -p 9001:9001 \
+              --add-host=host.docker.internal:host-gateway \
               -e GIN_MODE=release \
               -e GEMINI_API="$GEMINI_API" \
               -e JWT_KEY="$JWT_KEY" \
