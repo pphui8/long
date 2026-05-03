@@ -8,7 +8,7 @@ import (
 )
 
 var HashKey = func() []byte {
-	key := os.Getenv("HASH_KEY")
+	key := os.Getenv("PASSWORD_HASH")
 	if key == "" {
 		return []byte("default-hash-key")
 	}
