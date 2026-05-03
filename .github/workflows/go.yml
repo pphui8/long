@@ -63,7 +63,7 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GITHUB_TOKEN,GEMINI_API,IMAGE_PATH
+          envs: GITHUB_TOKEN,GEMINI_API,JWT_KEY
           script: |
             # Login to GHCR
             echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -85,5 +85,6 @@ jobs:
               ghcr.io/${{ github.repository }}:latest
 
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API: ${{ secrets.GEMINI_API }}
           JWT_KEY: ${{ secrets.JWT_KEY }}
