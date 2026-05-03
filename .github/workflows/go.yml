@@ -13,7 +13,6 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    no-cache: true
     permissions:
       contents: read
       packages: write
@@ -46,6 +45,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          no-cache: true
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
