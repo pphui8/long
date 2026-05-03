@@ -5,15 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-
-	"github.com/pphui8/long/logger"
-	"go.uber.org/zap"
 )
 
 var HashKey = func() []byte {
 	key := os.Getenv("HASH_KEY")
 	if key == "" {
-		logger.Log.Error("Failed to load HASH_KEY from environment variables", zap.String("HASH_KEY", key))
 		return []byte("default-hash-key")
 	}
 	return []byte(key)

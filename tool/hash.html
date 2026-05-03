@@ -1,0 +1,161 @@
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+
+<h2 class="sr-only">HMAC-SHA256 hashing tool — enter a string and key to compute the hash</h2>
+
+<div style="padding: 1.5rem 0;">
+
+  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 1.5rem;">
+    <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--color-background-info); display: flex; align-items: center; justify-content: center;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    </div>
+    <span style="font-size: 15px; font-weight: 500; color: var(--color-text-primary);">HMAC-SHA256 hasher</span>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+
+    <div>
+      <label style="font-size: 12px; color: var(--color-text-secondary); display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Input string</label>
+      <textarea id="input-str" placeholder="Enter string to hash…" rows="3" style="width: 100%; box-sizing: border-box; resize: vertical; font-family: var(--font-mono); font-size: 13px;"></textarea>
+    </div>
+
+    <div>
+      <label style="font-size: 12px; color: var(--color-text-secondary); display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Secret key</label>
+      <div style="position: relative;">
+        <input id="key-input" type="password" placeholder="Enter secret key…" style="width: 100%; box-sizing: border-box; font-family: var(--font-mono); font-size: 13px; padding-right: 80px;" />
+        <button id="toggle-key" onclick="toggleKey()" style="position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 12px; padding: 4px 10px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-secondary); color: var(--color-text-secondary); cursor: pointer;">show</button>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <button onclick="computeHash()" style="flex: 1; padding: 10px; font-size: 14px; font-weight: 500; cursor: pointer; border: 0.5px solid var(--color-border-secondary);">
+        Compute hash
+      </button>
+      <button onclick="clearAll()" style="padding: 10px 16px; font-size: 13px; cursor: pointer; color: var(--color-text-secondary); border: 0.5px solid var(--color-border-tertiary);">
+        Clear
+      </button>
+    </div>
+
+  </div>
+
+  <div id="result-section" style="display: none; margin-top: 1.5rem;">
+    <div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); border: 0.5px solid var(--color-border-tertiary); padding: 1rem 1.25rem;">
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <span style="font-size: 12px; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">HMAC-SHA256 result</span>
+        <div style="display: flex; gap: 6px;">
+          <button id="format-btn" onclick="toggleFormat()" style="font-size: 11px; padding: 3px 8px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: transparent; color: var(--color-text-secondary); cursor: pointer;">hex</button>
+          <button onclick="copyHash()" style="font-size: 11px; padding: 3px 8px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: transparent; color: var(--color-text-secondary); cursor: pointer;" id="copy-btn">copy</button>
+        </div>
+      </div>
+
+      <div id="hash-out" style="font-family: var(--font-mono); font-size: 12px; word-break: break-all; color: var(--color-text-primary); line-height: 1.7;"></div>
+
+      <div style="margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--color-border-tertiary); display: flex; gap: 16px;">
+        <div>
+          <span style="font-size: 11px; color: var(--color-text-tertiary);">Algorithm</span>
+          <p style="font-size: 13px; font-family: var(--font-mono); color: var(--color-text-secondary); margin: 2px 0 0;">HMAC-SHA256</p>
+        </div>
+        <div>
+          <span style="font-size: 11px; color: var(--color-text-tertiary);">Output length</span>
+          <p style="font-size: 13px; font-family: var(--font-mono); color: var(--color-text-secondary); margin: 2px 0 0;" id="len-out">—</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="error-section" style="display: none; margin-top: 1rem; padding: 10px 14px; background: var(--color-background-danger); border: 0.5px solid var(--color-border-danger); border-radius: var(--border-radius-md);">
+    <span id="error-msg" style="font-size: 13px; color: var(--color-text-danger);"></span>
+  </div>
+
+</div>
+
+<script>
+let currentHash = '';
+let showHex = true;
+let keyVisible = false;
+
+function showError(msg) {
+  document.getElementById('error-section').style.display = 'block';
+  document.getElementById('error-msg').textContent = msg;
+  document.getElementById('result-section').style.display = 'none';
+}
+
+function hideError() {
+  document.getElementById('error-section').style.display = 'none';
+}
+
+function computeHash() {
+  hideError();
+  const str = document.getElementById('input-str').value;
+  const key = document.getElementById('key-input').value;
+
+  if (!key) { showError('Please enter a secret key.'); return; }
+  if (str === '') { showError('Please enter a string to hash.'); return; }
+
+  try {
+    const wordArray = CryptoJS.HmacSHA256(str, key);
+    currentHash = wordArray.toString(CryptoJS.enc.Hex);
+    showHex = true;
+    document.getElementById('format-btn').textContent = 'hex';
+    renderHash();
+    document.getElementById('result-section').style.display = 'block';
+  } catch(e) {
+    showError('Error computing hash: ' + e.message);
+  }
+}
+
+function renderHash() {
+  const out = document.getElementById('hash-out');
+  if (showHex) {
+    out.textContent = currentHash;
+    document.getElementById('len-out').textContent = (currentHash.length / 2) + ' bytes / ' + currentHash.length + ' hex chars';
+  } else {
+    const b64 = hexToBase64(currentHash);
+    out.textContent = b64;
+    document.getElementById('len-out').textContent = b64.length + ' chars (base64)';
+  }
+}
+
+function hexToBase64(hex) {
+  const bytes = new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function toggleFormat() {
+  showHex = !showHex;
+  document.getElementById('format-btn').textContent = showHex ? 'hex' : 'base64';
+  renderHash();
+}
+
+function toggleKey() {
+  keyVisible = !keyVisible;
+  const input = document.getElementById('key-input');
+  input.type = keyVisible ? 'text' : 'password';
+  document.getElementById('toggle-key').textContent = keyVisible ? 'hide' : 'show';
+}
+
+function copyHash() {
+  const text = document.getElementById('hash-out').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'copied!';
+    setTimeout(() => btn.textContent = 'copy', 1500);
+  });
+}
+
+function clearAll() {
+  document.getElementById('input-str').value = '';
+  document.getElementById('key-input').value = '';
+  document.getElementById('result-section').style.display = 'none';
+  hideError();
+  currentHash = '';
+}
+
+document.getElementById('input-str').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); computeHash(); }
+});
+document.getElementById('key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') computeHash();
+});
+</script>
