@@ -48,7 +48,7 @@ func (r *llmRepository) GetConversationsByUsername(ctx context.Context, username
 	}
 	defer rows.Close()
 
-	var conversations []domain.Conversation
+	conversations := []domain.Conversation{}
 	for rows.Next() {
 		var conv domain.Conversation
 		if err := rows.Scan(&conv.ID, &conv.Username, &conv.Title, &conv.Summary, &conv.CreatedAt); err != nil {
@@ -73,7 +73,7 @@ func (r *llmRepository) GetMessagesByConversationID(ctx context.Context, convers
 	}
 	defer rows.Close()
 
-	var messages []domain.Message
+	messages := []domain.Message{}
 	for rows.Next() {
 		var msg domain.Message
 		if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.Role, &msg.Content, &msg.TokenCount, &msg.CreatedAt); err != nil {
