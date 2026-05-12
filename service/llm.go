@@ -14,6 +14,7 @@ import (
 
 type LLMService interface {
 	ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error)
+	GetConversations(ctx context.Context, username string) ([]domain.Conversation, error)
 }
 
 type llmService struct {
@@ -37,6 +38,10 @@ func NewLLMService(repo repository.LLMRepository) (LLMService, error) {
 		repo: repo,
 		llm:  llm,
 	}, nil
+}
+
+func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
+	return s.repo.GetConversationsByUsername(ctx, username)
 }
 
 func (s *llmService) ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error) {

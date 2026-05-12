@@ -43,3 +43,28 @@ func HandleGemini(c *gin.Context) {
 
 	c.JSON(http.StatusOK, resp)
 }
+
+func HandleGetConversations(c *gin.Context) {
+	username, exists := c.Get("username")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	repo := repository.NewLLMRepository(db.Instance)
+	llmSvc, err := service.NewLLMService(repo)
+	if err != nil {
+		logger.Log.Error("APP: Failed to initialize LLM service", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize AI service"})
+		return
+	}
+
+	conversations, err := llmSvc.GetConversations(c.Request.Context(), username.(string))
+	if err != nil {
+		logger.Log.Error("APP: Error fetching conversations", zap.String("username", username.(string)), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, conversations)
+}

@@ -10,6 +10,7 @@ import (
 type LLMRepository interface {
 	CreateConversation(ctx context.Context, username string, title string) (int, error)
 	GetConversation(ctx context.Context, id int) (*domain.Conversation, error)
+	GetConversationsByUsername(ctx context.Context, username string) ([]domain.Conversation, error)
 	SaveMessage(ctx context.Context, msg domain.Message) error
 	GetMessagesByConversationID(ctx context.Context, conversationID int) ([]domain.Message, error)
 }
@@ -37,6 +38,25 @@ func (r *llmRepository) GetConversation(ctx context.Context, id int) (*domain.Co
 		return nil, err
 	}
 	return &conv, nil
+}
+
+func (r *llmRepository) GetConversationsByUsername(ctx context.Context, username string) ([]domain.Conversation, error) {
+	query := "SELECT id, username, title, COALESCE(summary, ''), created_at FROM conversations WHERE username = $1 ORDER BY created_at DESC"
+	rows, err := r.db.QueryContext(ctx, query, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var conversations []domain.Conversation
+	for rows.Next() {
+		var conv domain.Conversation
+		if err := rows.Scan(&conv.ID, &conv.Username, &conv.Title, &conv.Summary, &conv.CreatedAt); err != nil {
+			return nil, err
+		}
+		conversations = append(conversations, conv)
+	}
+	return conversations, nil
 }
 
 func (r *llmRepository) SaveMessage(ctx context.Context, msg domain.Message) error {

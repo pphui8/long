@@ -26,6 +26,7 @@ func Setup() *gin.Engine {
 	{
 		protected.GET("/resource", handler.HandleResource)
 		protected.POST("/gemini", handler.HandleGemini)
+		protected.GET("/conversations", handler.HandleGetConversations)
 	}
 
 	return r
