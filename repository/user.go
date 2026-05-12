@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"github.com/pphui8/long/domain"
 	_ "github.com/lib/pq"
+	"github.com/pphui8/long/domain"
 )
 
 type UserRepository interface {

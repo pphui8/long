@@ -15,6 +15,7 @@ import (
 type LLMService interface {
 	ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error)
 	GetConversations(ctx context.Context, username string) ([]domain.Conversation, error)
+	GetMessages(ctx context.Context, username string, conversationID int) ([]domain.Message, error)
 }
 
 type llmService struct {
@@ -42,6 +43,19 @@ func NewLLMService(repo repository.LLMRepository) (LLMService, error) {
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
 	return s.repo.GetConversationsByUsername(ctx, username)
+}
+
+func (s *llmService) GetMessages(ctx context.Context, username string, conversationID int) ([]domain.Message, error) {
+	// Verify conversation ownership
+	conv, err := s.repo.GetConversation(ctx, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation: %w", err)
+	}
+	if conv.Username != username {
+		return nil, errors.New("unauthorized access to conversation")
+	}
+
+	return s.repo.GetMessagesByConversationID(ctx, conversationID)
 }
 
 func (s *llmService) ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error) {

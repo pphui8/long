@@ -3,9 +3,9 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	_ "github.com/lib/pq"
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/logger"
-	_ "github.com/lib/pq"
 	"go.uber.org/zap"
 )
 
