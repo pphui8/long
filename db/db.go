@@ -1,4 +1,4 @@
-package auth
+package db
 
 import (
 	"database/sql"
@@ -9,9 +9,9 @@ import (
 	"go.uber.org/zap"
 )
 
-var DB *sql.DB
+var Instance *sql.DB
 
-func InitDB(cfg domain.PostgresConfig) {
+func Init(cfg domain.PostgresConfig) {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode)
 
@@ -25,5 +25,5 @@ func InitDB(cfg domain.PostgresConfig) {
 	}
 
 	logger.Log.Info("SUCCESS: Connected to PostgreSQL database", zap.String("host", cfg.Host), zap.String("dbname", cfg.DBName))
-	DB = db
+	Instance = db
 }

@@ -9,19 +9,32 @@ The system is designed as a distributed application with a clear separation betw
 - **Reverse Proxy**: Nginx serves as the entry point for all incoming traffic on the domain.
 - **Frontend**:
     - **Path**: `/`
-    - **Container**: Dockerized Nginx hosting a React project.
+    - **Container**: Dockerized Nginx hosting a React project (`long-web`).
     - **Internal Port**: 9000
 - **Backend**:
     - **Path**: `/api`
-    - **Container**: Dockerized Golang application.
+    - **Container**: Dockerized Golang application (`long`).
     - **Dependency**: Communicates with external LLM platforms.
 
 ### Traffic Flow
 
-`User Request` -> `Nginx (Reverse Proxy)`
-- If path is `/`: Proxied to **Frontend Container** (React).
-- If path is `/api`: Proxied to **Backend Container** (Golang).
-- Backend executes logic and interacts with **LLM Platform**.
+1. **User Request** -> **Nginx (Reverse Proxy)**
+2. **Routing Decision**:
+    - If path is `/`: Proxied to **Frontend Container** (React).
+    - If path is `/api`: Proxied to **Backend Container** (Golang).
+3. **Backend Logic**:
+    - Validates Authentication (JWT).
+    - Executes business logic in **Service Layer**.
+    - Interacts with **Postgres** (User data) and **Redis** (Token Store).
+    - Communicates with **LLM Platform** for AI requests.
+
+### Configuration
+
+The backend application is configured via `env.yaml`, which specifies:
+- **App**: Port and environment settings.
+- **Postgres**: Connection details for the user database.
+- **Redis**: Connection details for the token store.
+- **LLM**: API keys and model configurations for external AI services.
 
 ---
 
@@ -32,23 +45,27 @@ The backend is built using Golang, following a layered architecture for maintain
 ### Authentication & Security
 
 The system uses JWT-based authentication with the following token lifecycle:
-- **Access Token**: Valid for **30 minutes**. Used for authenticating all protected API requests.
-- **Refresh Token**: Valid for **30 days**. Used to obtain new access tokens.
-- **Token Rotation**: Every time a refresh token is used, a new pair of access and refresh tokens is issued, and the old refresh token is invalidated.
-- **Storage**: Refresh tokens are tracked in Redis to support immediate revocation and prevent reuse of rotated tokens.
+- **Access Token**: Valid for **30 minutes**. Signed with HMAC-SHA256. Audience: `long-api`.
+- **Refresh Token**: Valid for **30 days**. Signed with HMAC-SHA256. Audience: `long-refresh`.
+- **Token Rotation**: Every time a refresh token is used, a new pair of access and refresh tokens is issued.
+- **Revocation & Reuse Detection**:
+    - `TokenStore` (implemented via **Redis**) tracks active and revoked tokens.
+    - If a revoked token is used, it indicates a potential reuse attack; the system invalidates all active sessions for that user.
+- **CORS**: Restricted to `https://llm.pphui8.com` with credentials allowed.
 
 ### Package Structure
 
 | Package | Responsibility |
 | :--- | :--- |
-| `auth` | JWT token generation, validation, and authentication middleware. |
-| `cmd/long` | Main entry point for the application. |
+| `auth` | JWT generation/validation, Redis-based token store. |
+| `cmd/long` | Main entry point; initializes logger, config, and starts the server. |
+| `db` | System-level database initialization and global instance management. |
 | `domain` | Centralized data models, request/response structures, and interfaces. |
-| `handler` | HTTP request handling, input validation, and response formatting. |
-| `logger` | Global logging configuration and utility. |
-| `repository` | Data persistence layer (e.g., database interactions). |
-| `router` | Definition of API routes and middleware registration. |
-| `service` | Business logic implementation and orchestration. |
+| `handler` | Gin-based HTTP handlers for request validation and response formatting. |
+| `logger` | Global structured logging configuration using `uber-go/zap`. |
+| `repository` | Data persistence layer for Postgres (users) and placeholder for LLM results. |
+| `router` | Definition of API routes, middleware registration, and CORS setup. |
+| `service` | Business logic implementation and orchestration (e.g., LLM processing). |
 
 ### API Documentation
 
@@ -56,18 +73,20 @@ The system uses JWT-based authentication with the following token lifecycle:
 
 | Method | Endpoint | Function | Description |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/login` | `HandleLogin` | Authenticates user credentials and returns access/refresh tokens. |
-| `POST` | `/refresh` | `HandleRefresh` | Implements refresh token rotation, returning a new access token and a new refresh token. |
-| `GET` | `/ping` | `HandlePing` | Health check endpoint to verify service availability. |
+| `POST` | `/login` | `HandleLogin` | Authenticates user credentials, issues access token and refresh token (via HttpOnly cookie). |
+| `POST` | `/refresh` | `HandleRefresh` | Rotates tokens; issues new access and refresh tokens. |
+| `GET` | `/ping` | `HandlePing` | Health check verifying availability of Redis and Postgres. |
 
 #### Protected Endpoints (Requires JWT)
 
 | Method | Endpoint | Function | Description |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/resource` | `HandleResource` | A sample protected route that returns user-specific information. |
+| `GET` | `/resource` | `HandleResource` | Returns user-specific information from the JWT context. |
 
-### Component Functions
+### Component Roles
 
-- **Auth Middleware**: Intercepts requests to protected routes to verify the `Authorization` header and injects identity into the context.
-- **LLM Service**: Handles the logic for processing prompts, interacting with LLM APIs, and managing the business flow of AI requests.
-- **LLM Repository**: Responsible for persisting LLM interaction results for auditing or history tracking.
+- **Auth Middleware**: Verifies the `Authorization: Bearer <token>` header, ensures the audience is `long-api`, and injects the username into the Gin context.
+- **DB Module**: Provides a central location for the database connection pool (`db.Instance`).
+- **LLM Service**: (`service/llm.go`) Encapsulates logic for interacting with external AI providers.
+- **LLM Repository**: (`repository/llm.go`) Provides an interface for persisting AI interaction history.
+- **User Repository**: (`repository/user.go`) Handles Postgres operations for user authentication.

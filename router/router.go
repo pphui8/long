@@ -25,6 +25,7 @@ func Setup() *gin.Engine {
 	protected.Use(auth.AuthMiddleware())
 	{
 		protected.GET("/resource", handler.HandleResource)
+		protected.POST("/gemini", handler.HandleGemini)
 	}
 
 	return r

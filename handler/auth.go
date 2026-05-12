@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pphui8/long/auth"
+	"github.com/pphui8/long/db"
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/logger"
 	"github.com/pphui8/long/repository"
@@ -22,7 +23,7 @@ func HandleLogin(c *gin.Context) {
 
 	logger.Log.Info("APP: Processing login request", zap.String("username", req.Username))
 
-	userRepo := repository.NewUserRepository(auth.DB)
+	userRepo := repository.NewUserRepository(db.Instance)
 	user, err := userRepo.GetByUsername(c, req.Username)
 
 	if err == nil {

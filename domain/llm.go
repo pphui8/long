@@ -1,9 +1,30 @@
 package domain
 
+import "time"
+
 type LLMRequest struct {
-	Prompt string `json:"prompt" binding:"required"`
+	ConversationID *int   `json:"conversation_id"` // Optional: if provided, continue the conversation
+	Prompt         string `json:"prompt" binding:"required"`
 }
 
 type LLMResponse struct {
-	Text string `json:"text"`
+	ConversationID int    `json:"conversation_id"`
+	Text           string `json:"text"`
+}
+
+type Conversation struct {
+	ID        int       `json:"id"`
+	Username  string    `json:"username"`
+	Title     string    `json:"title"`
+	Summary   string    `json:"summary"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Message struct {
+	ID             int       `json:"id"`
+	ConversationID int       `json:"conversation_id"`
+	Role           string    `json:"role"` // 'user', 'assistant'
+	Content        string    `json:"content"`
+	TokenCount     int       `json:"token_count"`
+	CreatedAt      time.Time `json:"created_at"`
 }

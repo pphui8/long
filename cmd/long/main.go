@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/pphui8/long/auth"
+	"github.com/pphui8/long/db"
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/logger"
 	"github.com/pphui8/long/router"
@@ -24,7 +25,7 @@ func main() {
 
 	auth.InitRedis(redisAddr, "", 0)
 	logger.Log.Info("Initializing Database connection")
-	auth.InitDB(config.Postgres)
+	db.Init(config.Postgres)
 
 	logger.Log.Info("Starting Gin Web Server", zap.String("port", strconv.Itoa(config.App.Port)), zap.String("redis", redisAddr))
 

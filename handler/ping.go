@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pphui8/long/auth"
+	"github.com/pphui8/long/db"
 	"github.com/pphui8/long/logger"
 	"go.uber.org/zap"
 )
@@ -30,10 +31,10 @@ func HandlePing(c *gin.Context) {
 	}
 
 	// Check Postgres
-	if auth.DB == nil {
+	if db.Instance == nil {
 		status["postgres"] = "not initialized"
 		statusCode = http.StatusInternalServerError
-	} else if err := auth.DB.Ping(); err != nil {
+	} else if err := db.Instance.Ping(); err != nil {
 		logger.Log.Error("Postgres ping failed", zap.Error(err))
 		status["postgres"] = "down"
 		status["postgres_error"] = err.Error()
