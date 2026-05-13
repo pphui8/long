@@ -13,6 +13,7 @@ type LLMRepository interface {
 	GetConversationsByUsername(ctx context.Context, username string) ([]domain.Conversation, error)
 	SaveMessage(ctx context.Context, msg domain.Message) error
 	GetMessagesByConversationID(ctx context.Context, conversationID int) ([]domain.Message, error)
+	DeleteConversation(ctx context.Context, id int) error
 }
 
 type llmRepository struct {
@@ -82,4 +83,10 @@ func (r *llmRepository) GetMessagesByConversationID(ctx context.Context, convers
 		messages = append(messages, msg)
 	}
 	return messages, nil
+}
+
+func (r *llmRepository) DeleteConversation(ctx context.Context, id int) error {
+	query := "DELETE FROM conversations WHERE id = $1"
+	_, err := r.db.ExecContext(ctx, query, id)
+	return err
 }
