@@ -14,6 +14,7 @@ import (
 
 type LLMService interface {
 	ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error)
+	StreamPrompt(ctx context.Context, username string, req domain.LLMRequest, onChunk func(string) error) (int, error)
 	GetConversations(ctx context.Context, username string) ([]domain.Conversation, error)
 	GetMessages(ctx context.Context, username string, conversationID int) ([]domain.Message, error)
 	DeleteConversation(ctx context.Context, username string, conversationID int) error
@@ -151,4 +152,81 @@ func (s *llmService) ProcessPrompt(ctx context.Context, username string, req dom
 		ConversationID: conversationID,
 		Text:           assistantText,
 	}, nil
+}
+
+func (s *llmService) StreamPrompt(ctx context.Context, username string, req domain.LLMRequest, onChunk func(string) error) (int, error) {
+	var conversationID int
+	var err error
+
+	if req.ConversationID == nil {
+		// Start a new conversation
+		title := req.Prompt
+		if len(title) > 50 {
+			title = title[:47] + "..."
+		}
+		conversationID, err = s.repo.CreateConversation(ctx, username, title)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create conversation: %w", err)
+		}
+	} else {
+		conversationID = *req.ConversationID
+		// Verify conversation ownership
+		conv, err := s.repo.GetConversation(ctx, conversationID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get conversation: %w", err)
+		}
+		if conv.Username != username {
+			return 0, errors.New("unauthorized access to conversation")
+		}
+	}
+
+	// Save user message
+	userMsg := domain.Message{
+		ConversationID: conversationID,
+		Role:           "user",
+		Content:        req.Prompt,
+	}
+	if err := s.repo.SaveMessage(ctx, userMsg); err != nil {
+		return 0, fmt.Errorf("failed to save user message: %w", err)
+	}
+
+	// Get conversation history
+	history, err := s.repo.GetMessagesByConversationID(ctx, conversationID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get history: %w", err)
+	}
+
+	var content []llms.MessageContent
+	for _, msg := range history {
+		role := llms.ChatMessageTypeHuman
+		if msg.Role == "assistant" {
+			role = llms.ChatMessageTypeAI
+		} else if msg.Role == "system" {
+			role = llms.ChatMessageTypeSystem
+		}
+		content = append(content, llms.TextParts(role, msg.Content))
+	}
+
+	var fullResponse string
+	_, err = s.llm.GenerateContent(ctx, content, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+		chunkStr := string(chunk)
+		fullResponse += chunkStr
+		return onChunk(chunkStr)
+	}))
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to generate streaming content: %w", err)
+	}
+
+	// Save assistant message
+	assistantMsg := domain.Message{
+		ConversationID: conversationID,
+		Role:           "assistant",
+		Content:        fullResponse,
+	}
+	if err := s.repo.SaveMessage(ctx, assistantMsg); err != nil {
+		return 0, fmt.Errorf("failed to save assistant message: %w", err)
+	}
+
+	return conversationID, nil
 }

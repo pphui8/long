@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -35,14 +36,34 @@ func HandleGemini(c *gin.Context) {
 		return
 	}
 
-	resp, err := llmSvc.ProcessPrompt(c.Request.Context(), username.(string), req)
-	if err != nil {
-		logger.Log.Error("APP: Error processing Gemini prompt", zap.String("username", username.(string)), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// Set headers for SSE
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
 		return
 	}
 
-	c.JSON(http.StatusOK, resp)
+	convID, err := llmSvc.StreamPrompt(c.Request.Context(), username.(string), req, func(chunk string) error {
+		fmt.Fprintf(c.Writer, "data: %s\n\n", chunk)
+		flusher.Flush()
+		return nil
+	})
+
+	if err != nil {
+		logger.Log.Error("APP: Error processing Gemini stream", zap.String("username", username.(string)), zap.Error(err))
+		fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	// Send the final conversation ID
+	fmt.Fprintf(c.Writer, "event: done\ndata: {\"conversation_id\": %d}\n\n", convID)
+	flusher.Flush()
 }
 
 func HandleGetConversations(c *gin.Context) {
