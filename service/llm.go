@@ -31,7 +31,7 @@ func NewLLMService(repo repository.LLMRepository) (LLMService, error) {
 	}
 
 	ctx := context.Background()
-	llm, err := googleai.New(ctx, googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(ctx, googleai.WithAPIKey(apiKey), googleai.WithDefaultModel("gemini-3.1-flash-lite"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create googleai llm: %w", err)
 	}
