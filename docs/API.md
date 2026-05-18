@@ -61,14 +61,18 @@ Most JSON errors use:
 
 ```json
 {
-  "error": "message"
+  "error": {
+    "code": "invalid_request",
+    "message": "Invalid request body",
+    "request_id": "b5ff4f6d-8d4c-4b96-80f4-4a41c7c1b942"
+  }
 }
 ```
 
 JSON endpoints return a consistent envelope:
 
 - Success: `{ "data": ... }`
-- Error: `{ "error": { "code": "...", "message": "..." } }`
+- Error: `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`
 
 The streaming endpoint sends plain text chunks as default SSE messages. Named `done` and `error` SSE events use the same JSON envelope shape in their `data` payload.
 
@@ -406,7 +410,7 @@ When streaming completes, the backend sends a named `done` event:
 
 ```text
 event: done
-data: {"conversation_id": 1}
+data: {"data":{"conversation_id":1}}
 
 ```
 
@@ -414,7 +418,7 @@ If an error occurs after the stream has started, the backend sends:
 
 ```text
 event: error
-data: failed to generate streaming content: ...
+data: {"error":{"code":"internal_error","message":"Internal server error","request_id":"b5ff4f6d-8d4c-4b96-80f4-4a41c7c1b942"}}
 
 ```
 
@@ -422,7 +426,8 @@ Important frontend parsing notes:
 
 - The backend streams plain text chunks as SSE `data:` lines.
 - Multiline chunks are split into multiple `data:` lines according to the SSE format.
-- The final `done` event data is JSON.
+- The final `done` event data is a JSON envelope: `{ "data": { "conversation_id": 1 } }`.
+- The `error` event data is a JSON envelope: `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`.
 - `EventSource` cannot send custom `Authorization` headers, so use `fetch` streaming instead of `EventSource`.
 
 Frontend streaming example:
@@ -453,7 +458,7 @@ export async function streamGemini({
     let message = "Gemini request failed";
     try {
       const data = await res.json();
-      message = data.error || message;
+      message = data.error?.message || message;
     } catch {
       // Response may not be JSON.
     }
@@ -479,9 +484,11 @@ export async function streamGemini({
       if (!event) continue;
 
       if (event.event === "done") {
-        onDone?.(JSON.parse(event.data));
+        const payload = JSON.parse(event.data);
+        onDone?.(payload.data);
       } else if (event.event === "error") {
-        throw new Error(event.data || "Stream error");
+        const payload = JSON.parse(event.data);
+        throw new Error(payload.error?.message || "Stream error");
       } else {
         onChunk?.(event.data);
       }
@@ -513,6 +520,8 @@ Common error responses before streaming starts:
 | :--- | :--- |
 | `400` | Invalid or missing JSON fields. |
 | `401` | Missing or invalid access token. |
+| `413` | Request body is too large. |
+| `429` | Rate limit exceeded. |
 | `500` | LLM service initialization error, database error, or unsupported streaming writer. |
 
 Errors after streaming starts are sent as SSE `error` events because the HTTP status has already been committed.
