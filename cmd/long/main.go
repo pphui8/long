@@ -23,7 +23,9 @@ func main() {
 	}
 	redisAddr := config.Redis.Host + ":" + strconv.Itoa(config.Redis.Port)
 
-	auth.InitRedis(redisAddr, "", 0)
+	if err := auth.InitRedis(redisAddr, config.Redis.Password, config.Redis.DB); err != nil {
+		logger.Log.Fatal("Failed to initialize Redis", zap.String("addr", redisAddr), zap.Int("db", config.Redis.DB), zap.Error(err))
+	}
 	logger.Log.Info("Initializing Database connection")
 	db.Init(config.Postgres)
 

@@ -12,15 +12,17 @@ import (
 var SecretKey = func() []byte {
 	key := os.Getenv("JWT_KEY")
 	if key == "" {
-		return fmt.Appendf(nil, "random-key-%d", time.Now().UnixNano())
+		panic("JWT_KEY environment variable is not set")
 	}
 	return []byte(key)
 }()
 
 const (
-	Issuer          = "long-server"
-	AccessAudience  = "long-api"
-	RefreshAudience = "long-refresh"
+	Issuer              = "long-server"
+	AccessAudience      = "long-api"
+	RefreshAudience     = "long-refresh"
+	AccessTokenLifetime = 30 * time.Minute
+	RefreshTokenTTL     = 7 * 24 * time.Hour
 )
 
 type Claims struct {
@@ -29,7 +31,7 @@ type Claims struct {
 }
 
 func GenerateAccessToken(username string) (string, error) {
-	expirationTime := time.Now().Add(30 * time.Minute)
+	expirationTime := time.Now().Add(AccessTokenLifetime)
 	claims := &Claims{
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -47,7 +49,7 @@ func GenerateAccessToken(username string) (string, error) {
 }
 
 func GenerateRefreshToken(username string) (string, string, error) {
-	expirationTime := time.Now().Add(30 * 24 * time.Hour)
+	expirationTime := time.Now().Add(RefreshTokenTTL)
 	jti := fmt.Sprintf("refresh-%s-%d", username, time.Now().UnixNano())
 	claims := &Claims{
 		Username: username,

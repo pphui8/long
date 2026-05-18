@@ -10,7 +10,7 @@ import (
 var HashKey = func() []byte {
 	key := os.Getenv("PASSWORD_HASH")
 	if key == "" {
-		return []byte("default-hash-key")
+		panic("PASSWORD_HASH environment variable is not set")
 	}
 	return []byte(key)
 }()

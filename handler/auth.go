@@ -59,7 +59,7 @@ func HandleLogin(c *gin.Context) {
 			// Set Refresh Token in HttpOnly cookie
 			secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
 			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie("refresh_token", refreshToken, 7*24*3600, "/", "", secure, true)
+			c.SetCookie("refresh_token", refreshToken, int(auth.RefreshTokenTTL.Seconds()), "/", "", secure, true)
 
 			logger.Log.Info("APP: Login successful", zap.String("username", req.Username))
 			c.JSON(http.StatusOK, gin.H{
@@ -136,7 +136,7 @@ func HandleRefresh(c *gin.Context) {
 	// 6. Set the new Refresh Token cookie
 	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("refresh_token", newRefreshToken, 7*24*3600, "/", "", secure, true)
+	c.SetCookie("refresh_token", newRefreshToken, int(auth.RefreshTokenTTL.Seconds()), "/", "", secure, true)
 
 	logger.Log.Info("APP: Token refresh successful", zap.String("username", claims.Username))
 	c.JSON(http.StatusOK, gin.H{

@@ -17,7 +17,7 @@ type TokenStore struct {
 var GlobalTokenStore *TokenStore
 
 // InitRedis initializes the GlobalTokenStore with a Redis client.
-func InitRedis(addr, password string, db int) {
+func InitRedis(addr, password string, db int) error {
 	client := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
@@ -30,16 +30,18 @@ func InitRedis(addr, password string, db int) {
 
 	if err := client.Ping(ctx).Err(); err != nil {
 		logger.Log.Error("Failed to connect to Redis", zap.String("addr", addr), zap.Error(err))
-	} else {
-		logger.Log.Info("Connected to Redis", zap.String("addr", addr))
+		_ = client.Close()
+		return err
 	}
 
+	logger.Log.Info("Connected to Redis", zap.String("addr", addr))
 	GlobalTokenStore = &TokenStore{client: client}
+	return nil
 }
 
 func (s *TokenStore) RevokeToken(ctx context.Context, jti string) error {
 	logger.Log.Debug("DAO: Revoking token", zap.String("jti", jti))
-	err := s.client.Set(ctx, "revoked:"+jti, "1", 7*24*time.Hour).Err()
+	err := s.client.Set(ctx, "revoked:"+jti, "1", RefreshTokenTTL).Err()
 	if err != nil {
 		logger.Log.Error("DAO Error: Failed to revoke token", zap.String("jti", jti), zap.Error(err))
 	}
@@ -57,7 +59,7 @@ func (s *TokenStore) IsRevoked(ctx context.Context, jti string) bool {
 
 func (s *TokenStore) RegisterToken(ctx context.Context, username string, jti string) error {
 	logger.Log.Debug("DAO: Registering token", zap.String("username", username), zap.String("jti", jti))
-	err := s.client.Set(ctx, "active:"+username, jti, 30*24*time.Hour).Err()
+	err := s.client.Set(ctx, "active:"+username, jti, RefreshTokenTTL).Err()
 	if err != nil {
 		logger.Log.Error("DAO Error: Failed to register token", zap.String("username", username), zap.Error(err))
 	}

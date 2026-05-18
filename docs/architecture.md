@@ -1,92 +1,211 @@
 # Project Architecture
 
-## System Architecture
+This document describes the architecture implemented by the current backend code in this repository. The React frontend and reverse proxy configuration are not included in this checkout, so those parts are described only as deployment expectations.
 
-The system is designed as a distributed application with a clear separation between the frontend, backend, and external services, coordinated by a central reverse proxy.
+## Runtime Overview
 
-### Deployment Overview
+The backend is a Go service built with Gin. It provides login, refresh-token rotation, health checking, a small protected resource endpoint, and Gemini-backed chat/conversation endpoints.
 
-- **Reverse Proxy**: Nginx serves as the entry point for all incoming traffic on the domain.
-- **Frontend**:
-    - **Path**: `/`
-    - **Container**: Dockerized Nginx hosting a React project (`long-web`).
-    - **Internal Port**: 9000
-- **Backend**:
-    - **Path**: `/api`
-    - **Container**: Dockerized Golang application (`long`).
-    - **Dependency**: Communicates with external LLM platforms.
+Expected deployment shape:
 
-### Traffic Flow
+- Browser frontend talks to the backend over HTTPS.
+- Nginx or another reverse proxy may sit in front of the backend.
+- The Go backend listens on the port configured in `env.yaml` (`9001` by default).
+- Postgres stores users, conversations, and messages.
+- Redis stores refresh-token state for rotation/revocation.
+- Gemini is accessed through `langchaingo` using the `GEMINI_API` environment variable.
 
-1. **User Request** -> **Nginx (Reverse Proxy)**
-2. **Routing Decision**:
-    - If path is `/`: Proxied to **Frontend Container** (React).
-    - If path is `/api`: Proxied to **Backend Container** (Golang).
-3. **Backend Logic**:
-    - Validates Authentication (JWT).
-    - Executes business logic in **Service Layer**.
-    - Interacts with **Postgres** (User data) and **Redis** (Token Store).
-    - Communicates with **LLM Platform** for AI requests.
+Current router paths are not prefixed with `/api` in code. If production exposes the backend under `/api`, that prefix is added by the reverse proxy, not by the Gin router.
 
-### Configuration
+## Request Flow
 
-The backend application is configured via `env.yaml`, which specifies:
-- **App**: Port and environment settings.
-- **Postgres**: Connection details for the user database.
-- **Redis**: Connection details for the token store.
-- **LLM**: API keys and model configurations for external AI services.
+1. A request reaches the Gin router from the frontend or reverse proxy.
+2. Global middleware runs:
+   - `logger.GinLogger()` writes structured access logs.
+   - `gin.Recovery()` handles panics.
+   - `router.CORSMiddleware()` allows `https://llm.pphui8.com` with credentials.
+3. Public routes are handled directly.
+4. Protected routes pass through `auth.AuthMiddleware()`.
+5. Handlers construct repositories/services and call the service layer.
+6. Repositories use the global Postgres connection in `db.Instance`.
+7. Auth refresh-token state is stored through `auth.GlobalTokenStore`.
+8. Chat requests call Gemini and persist conversation history.
 
----
-
-## Backend Architecture
-
-The backend is built using Golang, following a layered architecture for maintainability and scalability.
-
-### Authentication & Security
-
-The system uses JWT-based authentication with the following token lifecycle:
-- **Access Token**: Valid for **30 minutes**. Signed with HMAC-SHA256. Audience: `long-api`.
-- **Refresh Token**: Valid for **30 days**. Signed with HMAC-SHA256. Audience: `long-refresh`.
-- **Token Rotation**: Every time a refresh token is used, a new pair of access and refresh tokens is issued.
-- **Revocation & Reuse Detection**:
-    - `TokenStore` (implemented via **Redis**) tracks active and revoked tokens.
-    - If a revoked token is used, it indicates a potential reuse attack; the system invalidates all active sessions for that user.
-- **CORS**: Restricted to `https://llm.pphui8.com` with credentials allowed.
-
-### Package Structure
+## Package Responsibilities
 
 | Package | Responsibility |
 | :--- | :--- |
-| `auth` | JWT generation/validation, Redis-based token store. |
-| `cmd/long` | Main entry point; initializes logger, config, and starts the server. |
-| `db` | System-level database initialization and global instance management. |
-| `domain` | Centralized data models, request/response structures, and interfaces. |
-| `handler` | Gin-based HTTP handlers for request validation and response formatting. |
-| `logger` | Global structured logging configuration using `uber-go/zap`. |
-| `repository` | Data persistence layer for Postgres (users) and placeholder for LLM results. |
-| `router` | Definition of API routes, middleware registration, and CORS setup. |
-| `service` | Business logic implementation and orchestration (e.g., LLM processing). |
+| `cmd/long` | Application entry point. Initializes logger, loads `env.yaml`, initializes Redis/Postgres, builds the Gin router, and starts the server. |
+| `auth` | JWT generation/validation, password HMAC hashing, auth middleware, and Redis token store. |
+| `db` | Initializes the global Postgres connection pool as `db.Instance`. |
+| `domain` | Request/response structs, config structs, and database-facing domain models. |
+| `handler` | Gin HTTP handlers for auth, health checks, protected resource access, and Gemini chat/conversation APIs. |
+| `logger` | Global Zap logger and Gin request logging middleware. |
+| `repository` | Postgres access for users, conversations, and messages. |
+| `router` | Route registration and CORS middleware. |
+| `service` | Chat business logic: conversation ownership checks, message persistence, history assembly, Gemini calls, and streaming. |
+| `test/gemini` | Optional Gemini integration test. Skips when `GEMINI_API` is not set. |
+| `tool` | Local helper tooling, currently a password hash HTML page. |
 
-### API Documentation
+## Configuration
 
-#### Public Endpoints
+The backend reads `env.yaml` from the process working directory.
 
-| Method | Endpoint | Function | Description |
+Configured in `env.yaml`:
+
+- `app.port`: HTTP listen port.
+- `redis.host`, `redis.port`, `redis.db`, `redis.password`: Redis connection settings.
+- `postgres.host`, `postgres.port`, `postgres.user`, `postgres.password`, `postgres.dbname`, `postgres.sslmode`: Postgres connection settings.
+
+Configured through environment variables:
+
+- `GEMINI_API`: Gemini API key. Required by `service.NewLLMService`.
+- `JWT_KEY`: HMAC key used to sign JWTs. If absent, current code generates a process-local random key.
+- `PASSWORD_HASH`: HMAC key used to hash/verify passwords. If absent, current code uses a default fallback key.
+- `GIN_MODE`: Gin mode, set to `release` in the deployment workflow.
+
+## Authentication
+
+Login uses a fixed user table in Postgres. There is no sign-up or user management flow.
+
+Password verification:
+
+- The submitted password is HMAC-SHA256 hashed with `PASSWORD_HASH`.
+- The resulting hex digest is compared to `users.password_hash`.
+
+JWTs:
+
+- Access token:
+  - Signed with HMAC-SHA256.
+  - Audience: `long-api`.
+  - Issuer: `long-server`.
+  - Lifetime: 30 minutes.
+  - Sent to the frontend in the JSON login/refresh response.
+- Refresh token:
+  - Signed with HMAC-SHA256.
+  - Audience: `long-refresh`.
+  - Issuer: `long-server`.
+  - JWT lifetime: 7 days.
+  - Stored in an HttpOnly cookie named `refresh_token`.
+  - Cookie max age: 7 days.
+
+Refresh-token rotation:
+
+- On login, the refresh token JTI is registered in Redis as the active token for the user.
+- On refresh, the backend validates the cookie JWT, checks whether the JTI was revoked, verifies it is still the active token, revokes the old JTI, generates a new token pair, and registers the new JTI.
+- If a revoked token is reused, active sessions for the user are invalidated.
+
+Protected routes require:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+The middleware validates the token audience and stores the username in the Gin context.
+
+## Data Model
+
+The SQL schema is currently stored in `.github/scripts/database.SQL`.
+
+### `users`
+
+| Column | Type | Notes |
+| :--- | :--- | :--- |
+| `username` | `VARCHAR(50)` | Primary key. |
+| `password_hash` | `VARCHAR(255)` | HMAC-SHA256 hex digest. |
+
+### `conversations`
+
+| Column | Type | Notes |
+| :--- | :--- | :--- |
+| `id` | `SERIAL` | Primary key. |
+| `username` | `VARCHAR(50)` | References `users(username)`, cascades update/delete. |
+| `title` | `VARCHAR(255)` | Defaults to `New Chat`. New chats use the first prompt, truncated to 50 characters. |
+| `summary` | `TEXT` | Currently read but not written by service code. |
+| `created_at` | `TIMESTAMPTZ` | Defaults to current timestamp. |
+
+### `messages`
+
+| Column | Type | Notes |
+| :--- | :--- | :--- |
+| `id` | `SERIAL` | Primary key. |
+| `conversation_id` | `INT` | References `conversations(id)`, cascades delete. |
+| `role` | `VARCHAR(20)` | Expected values: `system`, `user`, `assistant`. |
+| `content` | `TEXT` | Message text. |
+| `token_count` | `INT` | Inserted as zero by current service code. |
+| `created_at` | `TIMESTAMPTZ` | Defaults to current timestamp. |
+
+Indexes:
+
+- `idx_conv_username` on `conversations(username)`.
+- `idx_msg_conv_id` on `messages(conversation_id)`.
+
+## Chat Flow
+
+`POST /gemini` is the main chat endpoint.
+
+For a new conversation:
+
+1. The request omits `conversation_id`.
+2. The service creates a conversation owned by the authenticated username.
+3. The conversation title is derived from the prompt.
+4. The user message is saved.
+5. Full conversation history is loaded.
+6. History is converted to LangChain message content.
+7. Gemini is called with streaming enabled.
+8. Each streamed chunk is sent to the frontend as an SSE `data:` event.
+9. The full assistant response is saved after streaming finishes.
+10. A final SSE `done` event is sent with the conversation ID.
+
+For an existing conversation:
+
+1. The request includes `conversation_id`.
+2. The service loads the conversation and verifies ownership.
+3. The same message-save, history-load, stream, and assistant-save flow runs.
+
+Current implementation details:
+
+- Provider/model is hardcoded to Gemini via `googleai.WithDefaultModel("gemini-3.1-flash-lite")`.
+- The full conversation history is sent on every request.
+- There is no pagination for message loading.
+- If provider streaming fails after the user message is saved, the conversation may contain the user message without an assistant reply.
+
+## HTTP Routes
+
+Public:
+
+| Method | Path | Handler | Description |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/login` | `HandleLogin` | Authenticates user credentials, issues access token and refresh token (via HttpOnly cookie). |
-| `POST` | `/refresh` | `HandleRefresh` | Rotates tokens; issues new access and refresh tokens. |
-| `GET` | `/ping` | `HandlePing` | Health check verifying availability of Redis and Postgres. |
+| `POST` | `/login` | `HandleLogin` | Validate username/password, issue access token, set refresh cookie. |
+| `POST` | `/refresh` | `HandleRefresh` | Rotate refresh token and issue a new access token. |
+| `GET` | `/ping` | `HandlePing` | Check Redis and Postgres availability. |
 
-#### Protected Endpoints (Requires JWT)
+Protected:
 
-| Method | Endpoint | Function | Description |
+| Method | Path | Handler | Description |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/resource` | `HandleResource` | Returns user-specific information from the JWT context. |
+| `GET` | `/resource` | `HandleResource` | Simple protected resource test. |
+| `POST` | `/gemini` | `HandleGemini` | Stream a Gemini chat response over SSE. |
+| `GET` | `/conversations` | `HandleGetConversations` | List authenticated user's conversations. |
+| `GET` | `/conversations/:id/messages` | `HandleGetMessages` | List messages for a conversation owned by the authenticated user. |
+| `GET` | `/conversations/:id/delete` | `HandleDeleteConversation` | Delete a conversation owned by the authenticated user. |
 
-### Component Roles
+See `API.md` for frontend integration details.
 
-- **Auth Middleware**: Verifies the `Authorization: Bearer <token>` header, ensures the audience is `long-api`, and injects the username into the Gin context.
-- **DB Module**: Provides a central location for the database connection pool (`db.Instance`).
-- **LLM Service**: (`service/llm.go`) Encapsulates logic for interacting with external AI providers.
-- **LLM Repository**: (`repository/llm.go`) Provides an interface for persisting AI interaction history.
-- **User Repository**: (`repository/user.go`) Handles Postgres operations for user authentication.
+## Deployment
+
+`Dockerfile` builds a static Go binary and runs it in Alpine:
+
+- Build stage: `golang:1.26.2-alpine`.
+- Runtime stage: `alpine:3.19`.
+- Exposes port `9001`.
+- Copies `env.yaml` into the image.
+
+`.github/workflows/go.yml` builds and pushes an image to GitHub Container Registry, then deploys over SSH on pushes to `main`.
+
+The deployment command:
+
+- Runs the container as `long`.
+- Publishes `9001:9001`.
+- Adds `host.docker.internal` for host access from Linux Docker.
+- Sets `GIN_MODE`, `GEMINI_API`, `JWT_KEY`, and `PASSWORD_HASH`.
