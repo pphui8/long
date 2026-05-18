@@ -65,7 +65,12 @@ Most JSON errors use:
 }
 ```
 
-Some endpoints return raw arrays on success. The streaming endpoint sends errors as SSE events after streaming has started.
+JSON endpoints return a consistent envelope:
+
+- Success: `{ "data": ... }`
+- Error: `{ "error": { "code": "...", "message": "..." } }`
+
+The streaming endpoint sends plain text chunks as default SSE messages. Named `done` and `error` SSE events use the same JSON envelope shape in their `data` payload.
 
 ## Public Endpoints
 

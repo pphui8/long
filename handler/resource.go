@@ -10,7 +10,7 @@ import (
 func (a *App) HandleResource(c *gin.Context) {
 	username, _ := c.Get("username")
 	a.Logger.Info("APP: Accessing protected resource", zap.Any("username", username))
-	c.JSON(http.StatusOK, gin.H{
+	respondData(c, http.StatusOK, gin.H{
 		"message": "Welcome to the protected resource!",
 		"user":    username,
 	})

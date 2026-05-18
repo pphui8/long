@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	maxChatRequestBodyBytes = 64 * 1024
+	maxPromptRunes          = 8000
+)
+
 func llmErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, domain.ErrValidation):
@@ -23,6 +29,19 @@ func llmErrorStatus(err error) int {
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
+	}
+}
+
+func llmErrorCode(err error) string {
+	switch {
+	case errors.Is(err, domain.ErrValidation):
+		return "invalid_request"
+	case errors.Is(err, domain.ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, domain.ErrNotFound):
+		return "not_found"
+	default:
+		return "internal_error"
 	}
 }
 
@@ -48,25 +67,36 @@ func writeSSE(w io.Writer, event string, data string) error {
 func (a *App) HandleChat(c *gin.Context) {
 	username, exists := c.Get("username")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 		return
 	}
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxChatRequestBodyBytes)
 	var req domain.LLMRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		a.Logger.Warn("APP: Chat request binding failed", zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			respondError(c, http.StatusRequestEntityTooLarge, "request_too_large", fmt.Sprintf("request body must be at most %d bytes", maxChatRequestBodyBytes))
+			return
+		}
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if strings.TrimSpace(req.Prompt) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "prompt is required"})
+	req.Prompt = strings.TrimSpace(req.Prompt)
+	if req.Prompt == "" {
+		respondError(c, http.StatusBadRequest, "invalid_prompt", "prompt is required")
+		return
+	}
+	if len([]rune(req.Prompt)) > maxPromptRunes {
+		respondError(c, http.StatusBadRequest, "prompt_too_large", fmt.Sprintf("prompt must be at most %d characters", maxPromptRunes))
 		return
 	}
 
 	if req.ConversationID != nil {
 		if err := a.LLMService.ValidateConversationAccess(c.Request.Context(), username.(string), *req.ConversationID); err != nil {
 			a.Logger.Warn("APP: Chat conversation access denied", zap.String("username", username.(string)), zap.Int("convID", *req.ConversationID), zap.Error(err))
-			c.JSON(llmErrorStatus(err), gin.H{"error": err.Error()})
+			respondError(c, llmErrorStatus(err), llmErrorCode(err), err.Error())
 			return
 		}
 	}
@@ -79,7 +109,7 @@ func (a *App) HandleChat(c *gin.Context) {
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
+		respondError(c, http.StatusInternalServerError, "streaming_unsupported", "Streaming not supported")
 		return
 	}
 
@@ -93,87 +123,95 @@ func (a *App) HandleChat(c *gin.Context) {
 
 	if err != nil {
 		a.Logger.Error("APP: Error processing chat stream", zap.String("username", username.(string)), zap.Error(err))
-		_ = writeSSE(c.Writer, "error", err.Error())
+		_ = writeSSEJSON(c.Writer, "error", gin.H{"error": apiError{Code: llmErrorCode(err), Message: err.Error()}})
 		flusher.Flush()
 		return
 	}
 
 	// Send the final conversation ID
-	_ = writeSSE(c.Writer, "done", fmt.Sprintf("{\"conversation_id\": %d}", convID))
+	_ = writeSSEJSON(c.Writer, "done", gin.H{"data": gin.H{"conversation_id": convID}})
 	flusher.Flush()
 }
 
 func (a *App) HandleGetConversations(c *gin.Context) {
 	username, exists := c.Get("username")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 		return
 	}
 
 	conversations, err := a.LLMService.GetConversations(c.Request.Context(), username.(string))
 	if err != nil {
 		a.Logger.Error("APP: Error fetching conversations", zap.String("username", username.(string)), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, conversations)
+	respondData(c, http.StatusOK, conversations)
 }
 
 func (a *App) HandleGetMessages(c *gin.Context) {
 	username, exists := c.Get("username")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 		return
 	}
 
 	convIDStr := c.Param("id")
 	if convIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Conversation ID is required"})
+		respondError(c, http.StatusBadRequest, "invalid_request", "Conversation ID is required")
 		return
 	}
 
 	convID, err := strconv.Atoi(convIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Conversation ID"})
+		respondError(c, http.StatusBadRequest, "invalid_request", "Invalid Conversation ID")
 		return
 	}
 
 	messages, err := a.LLMService.GetMessages(c.Request.Context(), username.(string), convID)
 	if err != nil {
 		a.Logger.Error("APP: Error fetching messages", zap.String("username", username.(string)), zap.Int("convID", convID), zap.Error(err))
-		c.JSON(llmErrorStatus(err), gin.H{"error": err.Error()})
+		respondError(c, llmErrorStatus(err), llmErrorCode(err), err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, messages)
+	respondData(c, http.StatusOK, messages)
 }
 
 func (a *App) HandleDeleteConversation(c *gin.Context) {
 	username, exists := c.Get("username")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 		return
 	}
 
 	convIDStr := c.Param("id")
 	if convIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Conversation ID is required"})
+		respondError(c, http.StatusBadRequest, "invalid_request", "Conversation ID is required")
 		return
 	}
 
 	convID, err := strconv.Atoi(convIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Conversation ID"})
+		respondError(c, http.StatusBadRequest, "invalid_request", "Invalid Conversation ID")
 		return
 	}
 
 	err = a.LLMService.DeleteConversation(c.Request.Context(), username.(string), convID)
 	if err != nil {
 		a.Logger.Error("APP: Error deleting conversation", zap.String("username", username.(string)), zap.Int("convID", convID), zap.Error(err))
-		c.JSON(llmErrorStatus(err), gin.H{"error": err.Error()})
+		respondError(c, llmErrorStatus(err), llmErrorCode(err), err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Conversation deleted successfully"})
+	respondData(c, http.StatusOK, gin.H{"message": "Conversation deleted successfully"})
+}
+
+func writeSSEJSON(w io.Writer, event string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return writeSSE(w, event, string(data))
 }

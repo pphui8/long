@@ -37,17 +37,6 @@ func (p *GeminiProvider) Name() string {
 	return GeminiProviderName
 }
 
-func (p *GeminiProvider) Generate(ctx context.Context, history []domain.Message) (string, error) {
-	resp, err := p.llm.GenerateContent(ctx, toMessageContent(history))
-	if err != nil {
-		return "", err
-	}
-	if len(resp.Choices) == 0 {
-		return "", errors.New("no response from LLM")
-	}
-	return resp.Choices[0].Content, nil
-}
-
 func (p *GeminiProvider) Stream(ctx context.Context, history []domain.Message, onChunk func(string) error) error {
 	_, err := p.llm.GenerateContent(ctx, toMessageContent(history), llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 		return onChunk(string(chunk))

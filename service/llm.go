@@ -12,7 +12,6 @@ import (
 )
 
 type LLMService interface {
-	ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error)
 	StreamPrompt(ctx context.Context, username string, req domain.LLMRequest, onChunk func(string) error) (int, error)
 	GetConversations(ctx context.Context, username string) ([]domain.Conversation, error)
 	GetMessages(ctx context.Context, username string, conversationID int) ([]domain.Message, error)
@@ -58,136 +57,85 @@ func (s *llmService) ValidateConversationAccess(ctx context.Context, username st
 	return err
 }
 
-func (s *llmService) ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error) {
-	if err := validateLLMRequest(req); err != nil {
-		return domain.LLMResponse{}, err
-	}
-
-	var conversationID int
-	var err error
-
-	if req.ConversationID == nil {
-		// Start a new conversation
-		title := req.Prompt
-		if len(title) > 50 {
-			title = title[:47] + "..."
-		}
-		conversationID, err = s.repo.CreateConversation(ctx, username, title)
-		if err != nil {
-			return domain.LLMResponse{}, fmt.Errorf("failed to create conversation: %w", err)
-		}
-	} else {
-		conversationID = *req.ConversationID
-		if _, err := s.getOwnedConversation(ctx, username, conversationID); err != nil {
-			return domain.LLMResponse{}, err
-		}
-	}
-
-	// Save user message
-	userMsg := domain.Message{
-		ConversationID: conversationID,
-		Role:           "user",
-		Content:        req.Prompt,
-	}
-	if err := s.repo.SaveMessage(ctx, userMsg); err != nil {
-		return domain.LLMResponse{}, fmt.Errorf("failed to save user message: %w", err)
-	}
-
-	// Get conversation history
-	history, err := s.repo.GetMessagesByConversationID(ctx, conversationID)
-	if err != nil {
-		return domain.LLMResponse{}, fmt.Errorf("failed to get history: %w", err)
-	}
-
-	assistantText, err := s.provider.Generate(ctx, history)
-	if err != nil {
-		return domain.LLMResponse{}, fmt.Errorf("failed to generate content: %w", err)
-	}
-
-	// Save assistant message
-	assistantMsg := domain.Message{
-		ConversationID: conversationID,
-		Role:           "assistant",
-		Content:        assistantText,
-	}
-	if err := s.repo.SaveMessage(ctx, assistantMsg); err != nil {
-		return domain.LLMResponse{}, fmt.Errorf("failed to save assistant message: %w", err)
-	}
-
-	return domain.LLMResponse{
-		ConversationID: conversationID,
-		Text:           assistantText,
-	}, nil
-}
-
 func (s *llmService) StreamPrompt(ctx context.Context, username string, req domain.LLMRequest, onChunk func(string) error) (int, error) {
 	if err := validateLLMRequest(req); err != nil {
 		return 0, err
 	}
 
 	var conversationID int
-	var err error
+	err := s.repo.WithTx(ctx, func(txRepo repository.LLMRepository) error {
+		var err error
 
-	if req.ConversationID == nil {
-		// Start a new conversation
-		title := req.Prompt
-		if len(title) > 50 {
-			title = title[:47] + "..."
+		if req.ConversationID == nil {
+			// Start a new conversation
+			title := req.Prompt
+			if len(title) > 50 {
+				title = title[:47] + "..."
+			}
+			conversationID, err = txRepo.CreateConversation(ctx, username, title)
+			if err != nil {
+				return fmt.Errorf("failed to create conversation: %w", err)
+			}
+		} else {
+			conversationID = *req.ConversationID
+			if _, err := getOwnedConversation(ctx, txRepo, username, conversationID); err != nil {
+				return err
+			}
 		}
-		conversationID, err = s.repo.CreateConversation(ctx, username, title)
+
+		// Save user message
+		userMsg := domain.Message{
+			ConversationID: conversationID,
+			Role:           "user",
+			Content:        req.Prompt,
+		}
+		if err := txRepo.SaveMessage(ctx, userMsg); err != nil {
+			return fmt.Errorf("failed to save user message: %w", err)
+		}
+
+		// Get conversation history
+		history, err := txRepo.GetMessagesByConversationID(ctx, conversationID)
 		if err != nil {
-			return 0, fmt.Errorf("failed to create conversation: %w", err)
+			return fmt.Errorf("failed to get history: %w", err)
 		}
-	} else {
-		conversationID = *req.ConversationID
-		if _, err := s.getOwnedConversation(ctx, username, conversationID); err != nil {
-			return 0, err
+
+		var fullResponse string
+		if err := s.provider.Stream(ctx, history, func(chunk string) error {
+			fullResponse += chunk
+			return onChunk(chunk)
+		}); err != nil {
+			return fmt.Errorf("failed to generate streaming content: %w", err)
 		}
-	}
 
-	// Save user message
-	userMsg := domain.Message{
-		ConversationID: conversationID,
-		Role:           "user",
-		Content:        req.Prompt,
-	}
-	if err := s.repo.SaveMessage(ctx, userMsg); err != nil {
-		return 0, fmt.Errorf("failed to save user message: %w", err)
-	}
+		// Save assistant message
+		assistantMsg := domain.Message{
+			ConversationID: conversationID,
+			Role:           "assistant",
+			Content:        fullResponse,
+		}
+		if err := txRepo.SaveMessage(ctx, assistantMsg); err != nil {
+			return fmt.Errorf("failed to save assistant message: %w", err)
+		}
 
-	// Get conversation history
-	history, err := s.repo.GetMessagesByConversationID(ctx, conversationID)
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to get history: %w", err)
-	}
-
-	var fullResponse string
-	if err := s.provider.Stream(ctx, history, func(chunk string) error {
-		fullResponse += chunk
-		return onChunk(chunk)
-	}); err != nil {
-		return 0, fmt.Errorf("failed to generate streaming content: %w", err)
-	}
-
-	// Save assistant message
-	assistantMsg := domain.Message{
-		ConversationID: conversationID,
-		Role:           "assistant",
-		Content:        fullResponse,
-	}
-	if err := s.repo.SaveMessage(ctx, assistantMsg); err != nil {
-		return 0, fmt.Errorf("failed to save assistant message: %w", err)
+		return 0, err
 	}
 
 	return conversationID, nil
 }
 
 func (s *llmService) getOwnedConversation(ctx context.Context, username string, conversationID int) (*domain.Conversation, error) {
+	return getOwnedConversation(ctx, s.repo, username, conversationID)
+}
+
+func getOwnedConversation(ctx context.Context, repo repository.LLMRepository, username string, conversationID int) (*domain.Conversation, error) {
 	if conversationID <= 0 {
 		return nil, fmt.Errorf("conversation id must be positive: %w", domain.ErrValidation)
 	}
 
-	conv, err := s.repo.GetConversation(ctx, conversationID)
+	conv, err := repo.GetConversation(ctx, conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("conversation not found: %w", domain.ErrNotFound)
 	}

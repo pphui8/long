@@ -1,7 +1,3 @@
-# TODO
-
-This backlog is based on the current repository state. The checkout contains the Go backend, deployment scripts, docs, and a helper tool; the React frontend described in `docs/architecture.md` is not present here, so frontend-specific issues need a separate review of `long-web`.
-
 ## P0 - Security And Correctness
 
 
@@ -18,13 +14,9 @@ This backlog is based on the current repository state. The checkout contains the
   - `domain.LLMRequest` only has `conversation_id` and `prompt`; no provider, model, temperature, system prompt, or tool options.
   - Add a minimal explicit model/provider contract before adding more platforms.
 
-- [ ] Reduce duplicated chat flow.
-  - `service.ProcessPrompt` and `service.StreamPrompt` duplicate conversation creation, ownership checks, message persistence, and history construction.
-  - Extract shared helpers or make streaming the primary path and adapt non-streaming to it.
-
-- [ ] Add transaction boundaries around chat persistence.
-  - `service/llm.go:161-229` creates conversations and saves the user message before the provider call. If streaming fails, the DB may contain a user message with no assistant response.
-  - Decide the desired behavior and make it explicit: transaction, pending/failed assistant message state, or retryable job record.
+- [x] Add transaction boundaries around chat persistence.
+  - `service.StreamPrompt` now runs conversation creation, user-message persistence, history loading, provider streaming, and assistant-message persistence inside one repository transaction.
+  - If provider streaming or assistant-message persistence fails, the transaction rolls back the conversation/user-message writes for that chat attempt.
 
 - [ ] Introduce a prompt/history policy.
   - `service/llm.go:193-208` sends the full conversation history every time with no token budget, summarization, truncation, or message count limit.
@@ -36,21 +28,12 @@ This backlog is based on the current repository state. The checkout contains the
 
 ## P1 - API And Data Model
 
-- [ ] Version the API routes.
-  - Current routes are top-level (`/login`, `/gemini`, `/conversations`), while docs mention reverse proxy path `/api`.
-  - Consider grouping backend routes under `/api/v1` and keeping proxy behavior consistent with docs.
+- [x] Normalize response shapes.
+  - JSON endpoints now return either `{ "data": ... }` or `{ "error": { "code": "...", "message": "..." } }`.
+  - SSE keeps plain text message chunks, but named `error` and `done` events now carry JSON envelopes.
 
-- [ ] Normalize response shapes.
-  - Some endpoints return raw slices, some return `{message: ...}`, and stream errors are raw text events.
-  - Define consistent JSON envelopes or a documented response contract for success, validation errors, auth errors, and provider errors.
-
-- [ ] Validate request sizes and prompt content.
-  - `domain.LLMRequest.Prompt` is only `binding:"required"`.
-  - Add max length/body-size limits, trim rules, and clear handling for empty or whitespace-only prompts.
-
-- [ ] Add pagination for conversations and messages.
-  - `repository/llm.go:45` and `repository/llm.go:70` return all rows.
-  - Add `limit`, `cursor`/`before`, and indexes that match expected ordering.
+- [x] Validate request sizes and prompt content.
+  - `POST /gemini` now limits request bodies to 64 KiB, trims prompt whitespace, rejects empty prompts, and rejects prompts over 8,000 characters.
 
 - [ ] Add `updated_at` or `last_message_at` to conversations.
   - Conversations are ordered by `created_at` only, so active conversations will not move to the top after new messages.

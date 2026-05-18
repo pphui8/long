@@ -7,11 +7,6 @@ type LLMRequest struct {
 	Prompt         string `json:"prompt" binding:"required"`
 }
 
-type LLMResponse struct {
-	ConversationID int    `json:"conversation_id"`
-	Text           string `json:"text"`
-}
-
 type Conversation struct {
 	ID        int       `json:"id"`
 	Username  string    `json:"username"`

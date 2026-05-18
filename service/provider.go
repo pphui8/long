@@ -8,7 +8,6 @@ import (
 
 type ChatProvider interface {
 	Name() string
-	Generate(ctx context.Context, history []domain.Message) (string, error)
 	Stream(ctx context.Context, history []domain.Message, onChunk func(string) error) error
 }
 

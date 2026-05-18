@@ -39,12 +39,12 @@ func (a *App) HandlePing(c *gin.Context) {
 	}
 
 	if statusCode == http.StatusOK {
-		c.JSON(http.StatusOK, gin.H{
+		respondData(c, http.StatusOK, gin.H{
 			"message": "pong",
 			"status":  status,
 		})
 	} else {
-		c.JSON(statusCode, gin.H{
+		respondData(c, statusCode, gin.H{
 			"message": "service unavailable",
 			"status":  status,
 		})

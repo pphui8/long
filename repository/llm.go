@@ -8,6 +8,7 @@ import (
 )
 
 type LLMRepository interface {
+	WithTx(ctx context.Context, fn func(LLMRepository) error) error
 	CreateConversation(ctx context.Context, username string, title string) (int, error)
 	GetConversation(ctx context.Context, id int) (*domain.Conversation, error)
 	GetConversationsByUsername(ctx context.Context, username string) ([]domain.Conversation, error)
@@ -16,25 +17,47 @@ type LLMRepository interface {
 	DeleteConversation(ctx context.Context, id int) error
 }
 
+type dbExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 type llmRepository struct {
 	db *sql.DB
+	q  dbExecutor
 }
 
 func NewLLMRepository(db *sql.DB) LLMRepository {
-	return &llmRepository{db: db}
+	return &llmRepository{db: db, q: db}
+}
+
+func (r *llmRepository) WithTx(ctx context.Context, fn func(LLMRepository) error) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	txRepo := &llmRepository{db: r.db, q: tx}
+	if err := fn(txRepo); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (r *llmRepository) CreateConversation(ctx context.Context, username string, title string) (int, error) {
 	var id int
 	query := "INSERT INTO conversations (username, title) VALUES ($1, $2) RETURNING id"
-	err := r.db.QueryRowContext(ctx, query, username, title).Scan(&id)
+	err := r.q.QueryRowContext(ctx, query, username, title).Scan(&id)
 	return id, err
 }
 
 func (r *llmRepository) GetConversation(ctx context.Context, id int) (*domain.Conversation, error) {
 	var conv domain.Conversation
 	query := "SELECT id, username, title, COALESCE(summary, ''), created_at FROM conversations WHERE id = $1"
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&conv.ID, &conv.Username, &conv.Title, &conv.Summary, &conv.CreatedAt)
+	err := r.q.QueryRowContext(ctx, query, id).Scan(&conv.ID, &conv.Username, &conv.Title, &conv.Summary, &conv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +66,7 @@ func (r *llmRepository) GetConversation(ctx context.Context, id int) (*domain.Co
 
 func (r *llmRepository) GetConversationsByUsername(ctx context.Context, username string) ([]domain.Conversation, error) {
 	query := "SELECT id, username, title, COALESCE(summary, ''), created_at FROM conversations WHERE username = $1 ORDER BY created_at DESC"
-	rows, err := r.db.QueryContext(ctx, query, username)
+	rows, err := r.q.QueryContext(ctx, query, username)
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +85,13 @@ func (r *llmRepository) GetConversationsByUsername(ctx context.Context, username
 
 func (r *llmRepository) SaveMessage(ctx context.Context, msg domain.Message) error {
 	query := "INSERT INTO messages (conversation_id, role, content, token_count) VALUES ($1, $2, $3, $4)"
-	_, err := r.db.ExecContext(ctx, query, msg.ConversationID, msg.Role, msg.Content, msg.TokenCount)
+	_, err := r.q.ExecContext(ctx, query, msg.ConversationID, msg.Role, msg.Content, msg.TokenCount)
 	return err
 }
 
 func (r *llmRepository) GetMessagesByConversationID(ctx context.Context, conversationID int) ([]domain.Message, error) {
 	query := "SELECT id, conversation_id, role, content, COALESCE(token_count, 0), created_at FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC"
-	rows, err := r.db.QueryContext(ctx, query, conversationID)
+	rows, err := r.q.QueryContext(ctx, query, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +110,6 @@ func (r *llmRepository) GetMessagesByConversationID(ctx context.Context, convers
 
 func (r *llmRepository) DeleteConversation(ctx context.Context, id int) error {
 	query := "DELETE FROM conversations WHERE id = $1"
-	_, err := r.db.ExecContext(ctx, query, id)
+	_, err := r.q.ExecContext(ctx, query, id)
 	return err
 }

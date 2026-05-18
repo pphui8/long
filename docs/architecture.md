@@ -169,7 +169,7 @@ Current implementation details:
 - Provider selection is wired at startup through a `ChatProvider`; the current default provider is Gemini with model `gemini-3.1-flash-lite`.
 - The full conversation history is sent on every request.
 - There is no pagination for message loading.
-- If provider streaming fails after the user message is saved, the conversation may contain the user message without an assistant reply.
+- Chat persistence runs inside a transaction; if provider streaming or assistant-message persistence fails, the conversation/user-message writes from that chat attempt are rolled back.
 
 ## HTTP Routes
 

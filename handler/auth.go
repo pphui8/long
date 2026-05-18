@@ -14,7 +14,7 @@ func (a *App) HandleLogin(c *gin.Context) {
 	var req domain.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		a.Logger.Warn("APP: Login request binding failed", zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -26,7 +26,7 @@ func (a *App) HandleLogin(c *gin.Context) {
 		match, err := auth.VerifyPassword(req.Password, user.PasswordHash)
 		if err != nil {
 			a.Logger.Error("APP: Error verifying password", zap.String("username", req.Username), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			respondError(c, http.StatusInternalServerError, "internal_error", "Internal server error")
 			return
 		}
 
@@ -34,14 +34,14 @@ func (a *App) HandleLogin(c *gin.Context) {
 			accessToken, err := auth.GenerateAccessToken(req.Username)
 			if err != nil {
 				a.Logger.Error("APP: Failed to generate access token", zap.String("username", req.Username), zap.Error(err))
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate access token"})
+				respondError(c, http.StatusInternalServerError, "token_generation_failed", "Failed to generate access token")
 				return
 			}
 
 			refreshToken, jti, err := auth.GenerateRefreshToken(req.Username)
 			if err != nil {
 				a.Logger.Error("APP: Failed to generate refresh token", zap.String("username", req.Username), zap.Error(err))
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
+				respondError(c, http.StatusInternalServerError, "token_generation_failed", "Failed to generate refresh token")
 				return
 			}
 
@@ -56,33 +56,33 @@ func (a *App) HandleLogin(c *gin.Context) {
 			c.SetCookie("refresh_token", refreshToken, int(auth.RefreshTokenTTL.Seconds()), "/", "", secure, true)
 
 			a.Logger.Info("APP: Login successful", zap.String("username", req.Username))
-			c.JSON(http.StatusOK, gin.H{
+			respondData(c, http.StatusOK, gin.H{
 				"access_token": accessToken,
 			})
 			return
 		}
 	} else if err != sql.ErrNoRows {
 		a.Logger.Error("APP: Database error during login", zap.String("username", req.Username), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		respondError(c, http.StatusInternalServerError, "internal_error", "Internal server error")
 		return
 	}
 
 	a.Logger.Warn("APP: Invalid login attempt", zap.String("username", req.Username))
-	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+	respondError(c, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials")
 }
 
 func (a *App) HandleRefresh(c *gin.Context) {
 	refreshToken, err := c.Cookie("refresh_token")
 	if err != nil {
 		a.Logger.Warn("APP: Refresh token cookie missing")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token cookie missing"})
+		respondError(c, http.StatusUnauthorized, "refresh_token_missing", "Refresh token cookie missing")
 		return
 	}
 
 	claims, err := auth.ValidateToken(refreshToken, auth.RefreshAudience)
 	if err != nil {
 		a.Logger.Warn("APP: Invalid refresh token", zap.Error(err))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		respondError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid refresh token")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (a *App) HandleRefresh(c *gin.Context) {
 		a.Logger.Warn("APP: Token reuse detected!", zap.String("username", claims.Username), zap.String("jti", claims.ID))
 		// Potential reuse attack! Invalidate all sessions for this user.
 		a.TokenStore.InvalidateUserSessions(c, claims.Username)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token reuse detected. All sessions invalidated."})
+		respondError(c, http.StatusUnauthorized, "refresh_token_reused", "Token reuse detected. All sessions invalidated.")
 		return
 	}
 
@@ -102,7 +102,7 @@ func (a *App) HandleRefresh(c *gin.Context) {
 	activeJti := a.TokenStore.GetActiveToken(c, claims.Username)
 	if activeJti != claims.ID {
 		a.Logger.Warn("APP: Token is no longer active", zap.String("username", claims.Username), zap.String("jti", claims.ID), zap.String("activeJti", activeJti))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token is no longer active"})
+		respondError(c, http.StatusUnauthorized, "refresh_token_inactive", "Token is no longer active")
 		return
 	}
 
@@ -113,14 +113,14 @@ func (a *App) HandleRefresh(c *gin.Context) {
 	newAccessToken, err := auth.GenerateAccessToken(claims.Username)
 	if err != nil {
 		a.Logger.Error("APP: Failed to generate access token during refresh", zap.String("username", claims.Username), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate access token"})
+		respondError(c, http.StatusInternalServerError, "token_generation_failed", "Failed to generate access token")
 		return
 	}
 
 	newRefreshToken, newJti, err := auth.GenerateRefreshToken(claims.Username)
 	if err != nil {
 		a.Logger.Error("APP: Failed to generate refresh token during refresh", zap.String("username", claims.Username), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
+		respondError(c, http.StatusInternalServerError, "token_generation_failed", "Failed to generate refresh token")
 		return
 	}
 
@@ -133,7 +133,7 @@ func (a *App) HandleRefresh(c *gin.Context) {
 	c.SetCookie("refresh_token", newRefreshToken, int(auth.RefreshTokenTTL.Seconds()), "/", "", secure, true)
 
 	a.Logger.Info("APP: Token refresh successful", zap.String("username", claims.Username))
-	c.JSON(http.StatusOK, gin.H{
+	respondData(c, http.StatusOK, gin.H{
 		"access_token": newAccessToken,
 	})
 }
