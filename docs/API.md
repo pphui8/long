@@ -241,14 +241,15 @@ Success response:
     "username": "alice",
     "title": "Where is Kyoto located?",
     "summary": "",
-    "created_at": "2026-05-18T10:00:00Z"
+    "created_at": "2026-05-18T10:00:00Z",
+    "last_message_at": "2026-05-18T10:02:00Z"
   }
 ]
 ```
 
 Notes:
 
-- Results are ordered by `created_at DESC`.
+- Results are ordered by `last_message_at DESC`.
 - There is currently no pagination.
 
 Common error responses:

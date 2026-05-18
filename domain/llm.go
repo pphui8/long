@@ -8,11 +8,12 @@ type LLMRequest struct {
 }
 
 type Conversation struct {
-	ID        int       `json:"id"`
-	Username  string    `json:"username"`
-	Title     string    `json:"title"`
-	Summary   string    `json:"summary"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            int       `json:"id"`
+	Username      string    `json:"username"`
+	Title         string    `json:"title"`
+	Summary       string    `json:"summary"`
+	CreatedAt     time.Time `json:"created_at"`
+	LastMessageAt time.Time `json:"last_message_at"`
 }
 
 type Message struct {

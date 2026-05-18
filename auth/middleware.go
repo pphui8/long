@@ -5,28 +5,41 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pphui8/long/logger"
 )
+
+type authAPIError struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+func abortWithAuthError(c *gin.Context, status int, code string, message string) {
+	c.JSON(status, gin.H{"error": authAPIError{
+		Code:      code,
+		Message:   message,
+		RequestID: logger.RequestIDFromGin(c),
+	}})
+	c.Abort()
+}
 
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
-			c.Abort()
+			abortWithAuthError(c, http.StatusUnauthorized, "authorization_missing", "Authorization header is required")
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if !(len(parts) == 2 && parts[0] == "Bearer") {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header must be Bearer token"})
-			c.Abort()
+			abortWithAuthError(c, http.StatusUnauthorized, "authorization_invalid", "Authorization header must be Bearer token")
 			return
 		}
 
 		claims, err := ValidateToken(parts[1], AccessAudience)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired access token"})
-			c.Abort()
+			abortWithAuthError(c, http.StatusUnauthorized, "access_token_invalid", "Invalid or expired access token")
 			return
 		}
 

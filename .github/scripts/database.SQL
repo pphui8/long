@@ -13,7 +13,8 @@ CREATE TABLE conversations (
         ON DELETE CASCADE,
     title VARCHAR(255) DEFAULT 'New Chat',
     summary TEXT,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    last_message_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 3. Messages Table
@@ -30,4 +31,5 @@ CREATE TABLE messages (
 
 -- Indices for faster lookups as the chat grows
 CREATE INDEX idx_conv_username ON conversations(username);
+CREATE INDEX idx_conv_username_last_message_at ON conversations(username, last_message_at DESC);
 CREATE INDEX idx_msg_conv_id ON messages(conversation_id);

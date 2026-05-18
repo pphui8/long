@@ -124,6 +124,7 @@ The SQL schema is currently stored in `.github/scripts/database.SQL`.
 | `title` | `VARCHAR(255)` | Defaults to `New Chat`. New chats use the first prompt, truncated to 50 characters. |
 | `summary` | `TEXT` | Currently read but not written by service code. |
 | `created_at` | `TIMESTAMPTZ` | Defaults to current timestamp. |
+| `last_message_at` | `TIMESTAMPTZ` | Defaults to current timestamp and is refreshed whenever a message is saved. |
 
 ### `messages`
 
@@ -139,6 +140,7 @@ The SQL schema is currently stored in `.github/scripts/database.SQL`.
 Indexes:
 
 - `idx_conv_username` on `conversations(username)`.
+- `idx_conv_username_last_message_at` on `conversations(username, last_message_at DESC)`.
 - `idx_msg_conv_id` on `messages(conversation_id)`.
 
 ## Chat Flow

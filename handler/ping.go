@@ -4,11 +4,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pphui8/long/logger"
 	"go.uber.org/zap"
 )
 
 func (a *App) HandlePing(c *gin.Context) {
-	a.Logger.Info("Ping received", zap.String("client", c.ClientIP()))
+	log := logger.FromGin(c, a.Logger)
+	log.Info("Ping received", zap.String("client", c.ClientIP()))
 
 	status := gin.H{
 		"redis":    "up",
@@ -21,9 +23,8 @@ func (a *App) HandlePing(c *gin.Context) {
 		status["redis"] = "not initialized"
 		statusCode = http.StatusInternalServerError
 	} else if err := a.TokenStore.Ping(c); err != nil {
-		a.Logger.Error("Redis ping failed", zap.Error(err))
+		log.Error("Redis ping failed", zap.Error(err))
 		status["redis"] = "down"
-		status["redis_error"] = err.Error()
 		statusCode = http.StatusInternalServerError
 	}
 
@@ -32,9 +33,8 @@ func (a *App) HandlePing(c *gin.Context) {
 		status["postgres"] = "not initialized"
 		statusCode = http.StatusInternalServerError
 	} else if err := a.DB.Ping(); err != nil {
-		a.Logger.Error("Postgres ping failed", zap.Error(err))
+		log.Error("Postgres ping failed", zap.Error(err))
 		status["postgres"] = "down"
-		status["postgres_error"] = err.Error()
 		statusCode = http.StatusInternalServerError
 	}
 

@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/pphui8/long/domain"
+	"github.com/pphui8/long/logger"
 	"github.com/pphui8/long/repository"
+	"go.uber.org/zap"
 )
 
 type LLMService interface {
@@ -22,14 +24,15 @@ type LLMService interface {
 type llmService struct {
 	repo     repository.LLMRepository
 	provider ChatProvider
+	log      *zap.Logger
 }
 
-func NewLLMService(repo repository.LLMRepository, provider ChatProvider) (LLMService, error) {
+func NewLLMService(repo repository.LLMRepository, provider ChatProvider, log *zap.Logger) (LLMService, error) {
 	if provider == nil {
 		return nil, errors.New("chat provider is required")
 	}
 
-	return &llmService{repo: repo, provider: provider}, nil
+	return &llmService{repo: repo, provider: provider, log: log}, nil
 }
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
@@ -62,6 +65,7 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		return 0, err
 	}
 
+	log := logger.WithContext(s.log, ctx)
 	var conversationID int
 	err := s.repo.WithTx(ctx, func(txRepo repository.LLMRepository) error {
 		var err error
@@ -100,12 +104,15 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		}
 
 		var fullResponse string
+		log.Info("LLM: Starting provider stream", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Int("history_messages", len(history)))
 		if err := s.provider.Stream(ctx, history, func(chunk string) error {
 			fullResponse += chunk
 			return onChunk(chunk)
 		}); err != nil {
+			log.Error("LLM: Provider stream failed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Error(err))
 			return fmt.Errorf("failed to generate streaming content: %w", err)
 		}
+		log.Info("LLM: Provider stream completed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Int("response_bytes", len(fullResponse)))
 
 		// Save assistant message
 		assistantMsg := domain.Message{

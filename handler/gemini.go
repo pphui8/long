@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,15 +9,18 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pphui8/long/domain"
+	"github.com/pphui8/long/logger"
 	"go.uber.org/zap"
 )
 
 const (
 	maxChatRequestBodyBytes = 64 * 1024
 	maxPromptRunes          = 8000
+	chatProviderTimeout     = 2 * time.Minute
 )
 
 func llmErrorStatus(err error) int {
@@ -27,6 +31,10 @@ func llmErrorStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	case errors.Is(err, context.Canceled):
+		return http.StatusRequestTimeout
 	default:
 		return http.StatusInternalServerError
 	}
@@ -40,8 +48,29 @@ func llmErrorCode(err error) string {
 		return "forbidden"
 	case errors.Is(err, domain.ErrNotFound):
 		return "not_found"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "provider_timeout"
+	case errors.Is(err, context.Canceled):
+		return "request_canceled"
 	default:
 		return "internal_error"
+	}
+}
+
+func llmClientErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, domain.ErrValidation):
+		return "Invalid request"
+	case errors.Is(err, domain.ErrForbidden):
+		return "Forbidden"
+	case errors.Is(err, domain.ErrNotFound):
+		return "Not found"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "Chat request timed out"
+	case errors.Is(err, context.Canceled):
+		return "Chat request was canceled"
+	default:
+		return "Internal server error"
 	}
 }
 
@@ -65,6 +94,7 @@ func writeSSE(w io.Writer, event string, data string) error {
 }
 
 func (a *App) HandleChat(c *gin.Context) {
+	log := logger.FromGin(c, a.Logger)
 	username, exists := c.Get("username")
 	if !exists {
 		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
@@ -74,13 +104,13 @@ func (a *App) HandleChat(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxChatRequestBodyBytes)
 	var req domain.LLMRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		a.Logger.Warn("APP: Chat request binding failed", zap.Error(err))
+		log.Warn("APP: Chat request binding failed", zap.Error(err))
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			respondError(c, http.StatusRequestEntityTooLarge, "request_too_large", fmt.Sprintf("request body must be at most %d bytes", maxChatRequestBodyBytes))
 			return
 		}
-		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		respondError(c, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
@@ -95,8 +125,8 @@ func (a *App) HandleChat(c *gin.Context) {
 
 	if req.ConversationID != nil {
 		if err := a.LLMService.ValidateConversationAccess(c.Request.Context(), username.(string), *req.ConversationID); err != nil {
-			a.Logger.Warn("APP: Chat conversation access denied", zap.String("username", username.(string)), zap.Int("convID", *req.ConversationID), zap.Error(err))
-			respondError(c, llmErrorStatus(err), llmErrorCode(err), err.Error())
+			log.Warn("APP: Chat conversation access denied", zap.String("username", username.(string)), zap.Int("convID", *req.ConversationID), zap.Error(err))
+			respondError(c, llmErrorStatus(err), llmErrorCode(err), llmClientErrorMessage(err))
 			return
 		}
 	}
@@ -113,7 +143,10 @@ func (a *App) HandleChat(c *gin.Context) {
 		return
 	}
 
-	convID, err := a.LLMService.StreamPrompt(c.Request.Context(), username.(string), req, func(chunk string) error {
+	streamCtx, cancel := context.WithTimeout(c.Request.Context(), chatProviderTimeout)
+	defer cancel()
+
+	convID, err := a.LLMService.StreamPrompt(streamCtx, username.(string), req, func(chunk string) error {
 		if err := writeSSE(c.Writer, "", chunk); err != nil {
 			return err
 		}
@@ -122,8 +155,8 @@ func (a *App) HandleChat(c *gin.Context) {
 	})
 
 	if err != nil {
-		a.Logger.Error("APP: Error processing chat stream", zap.String("username", username.(string)), zap.Error(err))
-		_ = writeSSEJSON(c.Writer, "error", gin.H{"error": apiError{Code: llmErrorCode(err), Message: err.Error()}})
+		log.Error("APP: Error processing chat stream", zap.String("username", username.(string)), zap.Error(err))
+		_ = writeSSEJSON(c.Writer, "error", gin.H{"error": apiError{Code: llmErrorCode(err), Message: llmClientErrorMessage(err), RequestID: logger.RequestIDFromGin(c)}})
 		flusher.Flush()
 		return
 	}
@@ -134,6 +167,7 @@ func (a *App) HandleChat(c *gin.Context) {
 }
 
 func (a *App) HandleGetConversations(c *gin.Context) {
+	log := logger.FromGin(c, a.Logger)
 	username, exists := c.Get("username")
 	if !exists {
 		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
@@ -142,8 +176,8 @@ func (a *App) HandleGetConversations(c *gin.Context) {
 
 	conversations, err := a.LLMService.GetConversations(c.Request.Context(), username.(string))
 	if err != nil {
-		a.Logger.Error("APP: Error fetching conversations", zap.String("username", username.(string)), zap.Error(err))
-		respondError(c, http.StatusInternalServerError, "internal_error", err.Error())
+		log.Error("APP: Error fetching conversations", zap.String("username", username.(string)), zap.Error(err))
+		respondError(c, http.StatusInternalServerError, "internal_error", "Internal server error")
 		return
 	}
 
@@ -151,6 +185,7 @@ func (a *App) HandleGetConversations(c *gin.Context) {
 }
 
 func (a *App) HandleGetMessages(c *gin.Context) {
+	log := logger.FromGin(c, a.Logger)
 	username, exists := c.Get("username")
 	if !exists {
 		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
@@ -171,8 +206,8 @@ func (a *App) HandleGetMessages(c *gin.Context) {
 
 	messages, err := a.LLMService.GetMessages(c.Request.Context(), username.(string), convID)
 	if err != nil {
-		a.Logger.Error("APP: Error fetching messages", zap.String("username", username.(string)), zap.Int("convID", convID), zap.Error(err))
-		respondError(c, llmErrorStatus(err), llmErrorCode(err), err.Error())
+		log.Error("APP: Error fetching messages", zap.String("username", username.(string)), zap.Int("convID", convID), zap.Error(err))
+		respondError(c, llmErrorStatus(err), llmErrorCode(err), llmClientErrorMessage(err))
 		return
 	}
 
@@ -180,6 +215,7 @@ func (a *App) HandleGetMessages(c *gin.Context) {
 }
 
 func (a *App) HandleDeleteConversation(c *gin.Context) {
+	log := logger.FromGin(c, a.Logger)
 	username, exists := c.Get("username")
 	if !exists {
 		respondError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
@@ -200,8 +236,8 @@ func (a *App) HandleDeleteConversation(c *gin.Context) {
 
 	err = a.LLMService.DeleteConversation(c.Request.Context(), username.(string), convID)
 	if err != nil {
-		a.Logger.Error("APP: Error deleting conversation", zap.String("username", username.(string)), zap.Int("convID", convID), zap.Error(err))
-		respondError(c, llmErrorStatus(err), llmErrorCode(err), err.Error())
+		log.Error("APP: Error deleting conversation", zap.String("username", username.(string)), zap.Int("convID", convID), zap.Error(err))
+		respondError(c, llmErrorStatus(err), llmErrorCode(err), llmClientErrorMessage(err))
 		return
 	}
 

@@ -25,7 +25,7 @@ func Setup(app *handler.App) *gin.Engine {
 	protected.Use(auth.AuthMiddleware())
 	{
 		protected.GET("/resource", app.HandleResource)
-		protected.POST("/gemini", app.HandleChat)
+		protected.POST("/gemini", GeminiAbuseProtection(app.Logger), app.HandleChat)
 		protected.GET("/conversations", app.HandleGetConversations)
 		protected.GET("/conversations/:id/messages", app.HandleGetMessages)
 		protected.GET("/conversations/:id/delete", app.HandleDeleteConversation)
@@ -38,7 +38,8 @@ func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "https://llm.pphui8.com")
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Request-ID")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
