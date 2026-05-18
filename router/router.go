@@ -7,28 +7,28 @@ import (
 	"github.com/pphui8/long/logger"
 )
 
-func Setup() *gin.Engine {
+func Setup(app *handler.App) *gin.Engine {
 	r := gin.New()
-	r.Use(logger.GinLogger(), gin.Recovery())
+	r.Use(logger.GinLogger(app.Logger), gin.Recovery())
 
 	// CORS middleware
 	r.Use(CORSMiddleware())
 
 	// Public routes
-	r.POST("/login", handler.HandleLogin)
-	r.POST("/refresh", handler.HandleRefresh)
+	r.POST("/login", app.HandleLogin)
+	r.POST("/refresh", app.HandleRefresh)
 
-	r.GET("/ping", handler.HandlePing)
+	r.GET("/ping", app.HandlePing)
 
 	// Protected routes
 	protected := r.Group("/")
 	protected.Use(auth.AuthMiddleware())
 	{
-		protected.GET("/resource", handler.HandleResource)
-		protected.POST("/gemini", handler.HandleGemini)
-		protected.GET("/conversations", handler.HandleGetConversations)
-		protected.GET("/conversations/:id/messages", handler.HandleGetMessages)
-		protected.GET("/conversations/:id/delete", handler.HandleDeleteConversation)
+		protected.GET("/resource", app.HandleResource)
+		protected.POST("/gemini", app.HandleChat)
+		protected.GET("/conversations", app.HandleGetConversations)
+		protected.GET("/conversations/:id/messages", app.HandleGetMessages)
+		protected.GET("/conversations/:id/delete", app.HandleDeleteConversation)
 	}
 
 	return r

@@ -4,14 +4,11 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pphui8/long/auth"
-	"github.com/pphui8/long/db"
-	"github.com/pphui8/long/logger"
 	"go.uber.org/zap"
 )
 
-func HandlePing(c *gin.Context) {
-	logger.Log.Info("Ping received", zap.String("client", c.ClientIP()))
+func (a *App) HandlePing(c *gin.Context) {
+	a.Logger.Info("Ping received", zap.String("client", c.ClientIP()))
 
 	status := gin.H{
 		"redis":    "up",
@@ -20,22 +17,22 @@ func HandlePing(c *gin.Context) {
 	statusCode := http.StatusOK
 
 	// Check Redis
-	if auth.GlobalTokenStore == nil {
+	if a.TokenStore == nil {
 		status["redis"] = "not initialized"
 		statusCode = http.StatusInternalServerError
-	} else if err := auth.GlobalTokenStore.Ping(c); err != nil {
-		logger.Log.Error("Redis ping failed", zap.Error(err))
+	} else if err := a.TokenStore.Ping(c); err != nil {
+		a.Logger.Error("Redis ping failed", zap.Error(err))
 		status["redis"] = "down"
 		status["redis_error"] = err.Error()
 		statusCode = http.StatusInternalServerError
 	}
 
 	// Check Postgres
-	if db.Instance == nil {
+	if a.DB == nil {
 		status["postgres"] = "not initialized"
 		statusCode = http.StatusInternalServerError
-	} else if err := db.Instance.Ping(); err != nil {
-		logger.Log.Error("Postgres ping failed", zap.Error(err))
+	} else if err := a.DB.Ping(); err != nil {
+		a.Logger.Error("Postgres ping failed", zap.Error(err))
 		status["postgres"] = "down"
 		status["postgres_error"] = err.Error()
 		statusCode = http.StatusInternalServerError

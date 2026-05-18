@@ -11,9 +11,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var Log *zap.Logger
-
-func Init(logPath string) {
+func Init(logPath string) *zap.Logger {
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
 		panic(err)
@@ -36,17 +34,17 @@ func Init(logPath string) {
 		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zap.InfoLevel),
 	)
 
-	Log = zap.New(core, zap.AddCaller())
+	return zap.New(core, zap.AddCaller())
 }
 
-func Sync() {
-	if Log != nil {
-		_ = Log.Sync()
+func Sync(log *zap.Logger) {
+	if log != nil {
+		_ = log.Sync()
 	}
 }
 
 // GinLogger is a middleware that logs HTTP requests using Zap.
-func GinLogger() gin.HandlerFunc {
+func GinLogger(log *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
@@ -59,10 +57,10 @@ func GinLogger() gin.HandlerFunc {
 
 		if len(c.Errors) > 0 {
 			for _, e := range c.Errors.Errors() {
-				Log.Error("Gin Error", zap.String("error", e))
+				log.Error("Gin Error", zap.String("error", e))
 			}
 		} else {
-			Log.Info("Access Log",
+			log.Info("Access Log",
 				zap.Int("status", status),
 				zap.String("method", c.Request.Method),
 				zap.String("path", path),

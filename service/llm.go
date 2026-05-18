@@ -2,14 +2,13 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
-	"os"
+	"strings"
 
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/repository"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/googleai"
 )
 
 type LLMService interface {
@@ -18,29 +17,20 @@ type LLMService interface {
 	GetConversations(ctx context.Context, username string) ([]domain.Conversation, error)
 	GetMessages(ctx context.Context, username string, conversationID int) ([]domain.Message, error)
 	DeleteConversation(ctx context.Context, username string, conversationID int) error
+	ValidateConversationAccess(ctx context.Context, username string, conversationID int) error
 }
 
 type llmService struct {
-	repo repository.LLMRepository
-	llm  *googleai.GoogleAI
+	repo     repository.LLMRepository
+	provider ChatProvider
 }
 
-func NewLLMService(repo repository.LLMRepository) (LLMService, error) {
-	apiKey := os.Getenv("GEMINI_API")
-	if apiKey == "" {
-		return nil, errors.New("GEMINI_API environment variable not set")
+func NewLLMService(repo repository.LLMRepository, provider ChatProvider) (LLMService, error) {
+	if provider == nil {
+		return nil, errors.New("chat provider is required")
 	}
 
-	ctx := context.Background()
-	llm, err := googleai.New(ctx, googleai.WithAPIKey(apiKey), googleai.WithDefaultModel("gemini-3.1-flash-lite"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create googleai llm: %w", err)
-	}
-
-	return &llmService{
-		repo: repo,
-		llm:  llm,
-	}, nil
+	return &llmService{repo: repo, provider: provider}, nil
 }
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
@@ -48,32 +38,31 @@ func (s *llmService) GetConversations(ctx context.Context, username string) ([]d
 }
 
 func (s *llmService) GetMessages(ctx context.Context, username string, conversationID int) ([]domain.Message, error) {
-	// Verify conversation ownership
-	conv, err := s.repo.GetConversation(ctx, conversationID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get conversation: %w", err)
-	}
-	if conv.Username != username {
-		return nil, errors.New("unauthorized access to conversation")
+	if _, err := s.getOwnedConversation(ctx, username, conversationID); err != nil {
+		return nil, err
 	}
 
 	return s.repo.GetMessagesByConversationID(ctx, conversationID)
 }
 
 func (s *llmService) DeleteConversation(ctx context.Context, username string, conversationID int) error {
-	// Verify conversation ownership
-	conv, err := s.repo.GetConversation(ctx, conversationID)
-	if err != nil {
-		return fmt.Errorf("failed to get conversation: %w", err)
-	}
-	if conv.Username != username {
-		return errors.New("unauthorized access to conversation")
+	if _, err := s.getOwnedConversation(ctx, username, conversationID); err != nil {
+		return err
 	}
 
 	return s.repo.DeleteConversation(ctx, conversationID)
 }
 
+func (s *llmService) ValidateConversationAccess(ctx context.Context, username string, conversationID int) error {
+	_, err := s.getOwnedConversation(ctx, username, conversationID)
+	return err
+}
+
 func (s *llmService) ProcessPrompt(ctx context.Context, username string, req domain.LLMRequest) (domain.LLMResponse, error) {
+	if err := validateLLMRequest(req); err != nil {
+		return domain.LLMResponse{}, err
+	}
+
 	var conversationID int
 	var err error
 
@@ -89,13 +78,8 @@ func (s *llmService) ProcessPrompt(ctx context.Context, username string, req dom
 		}
 	} else {
 		conversationID = *req.ConversationID
-		// Verify conversation ownership
-		conv, err := s.repo.GetConversation(ctx, conversationID)
-		if err != nil {
-			return domain.LLMResponse{}, fmt.Errorf("failed to get conversation: %w", err)
-		}
-		if conv.Username != username {
-			return domain.LLMResponse{}, errors.New("unauthorized access to conversation")
+		if _, err := s.getOwnedConversation(ctx, username, conversationID); err != nil {
+			return domain.LLMResponse{}, err
 		}
 	}
 
@@ -115,28 +99,10 @@ func (s *llmService) ProcessPrompt(ctx context.Context, username string, req dom
 		return domain.LLMResponse{}, fmt.Errorf("failed to get history: %w", err)
 	}
 
-	var content []llms.MessageContent
-	for _, msg := range history {
-		role := llms.ChatMessageTypeHuman
-		if msg.Role == "assistant" {
-			role = llms.ChatMessageTypeAI
-		} else if msg.Role == "system" {
-			role = llms.ChatMessageTypeSystem
-		}
-		content = append(content, llms.TextParts(role, msg.Content))
-	}
-
-	// Call LLM
-	resp, err := s.llm.GenerateContent(ctx, content)
+	assistantText, err := s.provider.Generate(ctx, history)
 	if err != nil {
 		return domain.LLMResponse{}, fmt.Errorf("failed to generate content: %w", err)
 	}
-
-	if len(resp.Choices) == 0 {
-		return domain.LLMResponse{}, errors.New("no response from LLM")
-	}
-
-	assistantText := resp.Choices[0].Content
 
 	// Save assistant message
 	assistantMsg := domain.Message{
@@ -155,6 +121,10 @@ func (s *llmService) ProcessPrompt(ctx context.Context, username string, req dom
 }
 
 func (s *llmService) StreamPrompt(ctx context.Context, username string, req domain.LLMRequest, onChunk func(string) error) (int, error) {
+	if err := validateLLMRequest(req); err != nil {
+		return 0, err
+	}
+
 	var conversationID int
 	var err error
 
@@ -170,13 +140,8 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		}
 	} else {
 		conversationID = *req.ConversationID
-		// Verify conversation ownership
-		conv, err := s.repo.GetConversation(ctx, conversationID)
-		if err != nil {
-			return 0, fmt.Errorf("failed to get conversation: %w", err)
-		}
-		if conv.Username != username {
-			return 0, errors.New("unauthorized access to conversation")
+		if _, err := s.getOwnedConversation(ctx, username, conversationID); err != nil {
+			return 0, err
 		}
 	}
 
@@ -196,25 +161,11 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		return 0, fmt.Errorf("failed to get history: %w", err)
 	}
 
-	var content []llms.MessageContent
-	for _, msg := range history {
-		role := llms.ChatMessageTypeHuman
-		if msg.Role == "assistant" {
-			role = llms.ChatMessageTypeAI
-		} else if msg.Role == "system" {
-			role = llms.ChatMessageTypeSystem
-		}
-		content = append(content, llms.TextParts(role, msg.Content))
-	}
-
 	var fullResponse string
-	_, err = s.llm.GenerateContent(ctx, content, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
-		chunkStr := string(chunk)
-		fullResponse += chunkStr
-		return onChunk(chunkStr)
-	}))
-
-	if err != nil {
+	if err := s.provider.Stream(ctx, history, func(chunk string) error {
+		fullResponse += chunk
+		return onChunk(chunk)
+	}); err != nil {
 		return 0, fmt.Errorf("failed to generate streaming content: %w", err)
 	}
 
@@ -229,4 +180,33 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 	}
 
 	return conversationID, nil
+}
+
+func (s *llmService) getOwnedConversation(ctx context.Context, username string, conversationID int) (*domain.Conversation, error) {
+	if conversationID <= 0 {
+		return nil, fmt.Errorf("conversation id must be positive: %w", domain.ErrValidation)
+	}
+
+	conv, err := s.repo.GetConversation(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("conversation not found: %w", domain.ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation: %w", err)
+	}
+	if conv.Username != username {
+		return nil, fmt.Errorf("unauthorized access to conversation: %w", domain.ErrForbidden)
+	}
+
+	return conv, nil
+}
+
+func validateLLMRequest(req domain.LLMRequest) error {
+	if strings.TrimSpace(req.Prompt) == "" {
+		return fmt.Errorf("prompt is required: %w", domain.ErrValidation)
+	}
+	if req.ConversationID != nil && *req.ConversationID <= 0 {
+		return fmt.Errorf("conversation id must be positive: %w", domain.ErrValidation)
+	}
+	return nil
 }

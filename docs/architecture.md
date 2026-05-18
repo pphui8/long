@@ -4,7 +4,7 @@ This document describes the architecture implemented by the current backend code
 
 ## Runtime Overview
 
-The backend is a Go service built with Gin. It provides login, refresh-token rotation, health checking, a small protected resource endpoint, and Gemini-backed chat/conversation endpoints.
+The backend is a Go service built with Gin. It provides login, refresh-token rotation, health checking, a small protected resource endpoint, and provider-backed chat/conversation endpoints.
 
 Expected deployment shape:
 
@@ -13,7 +13,7 @@ Expected deployment shape:
 - The Go backend listens on the port configured in `env.yaml` (`9001` by default).
 - Postgres stores users, conversations, and messages.
 - Redis stores refresh-token state for rotation/revocation.
-- Gemini is accessed through `langchaingo` using the `GEMINI_API` environment variable.
+- Chat generation is accessed through a provider interface; the current startup wires a Gemini provider using `GEMINI_API`.
 
 Current router paths are not prefixed with `/api` in code. If production exposes the backend under `/api`, that prefix is added by the reverse proxy, not by the Gin router.
 
@@ -21,29 +21,30 @@ Current router paths are not prefixed with `/api` in code. If production exposes
 
 1. A request reaches the Gin router from the frontend or reverse proxy.
 2. Global middleware runs:
-   - `logger.GinLogger()` writes structured access logs.
+   - `logger.GinLogger(app.Logger)` writes structured access logs.
    - `gin.Recovery()` handles panics.
    - `router.CORSMiddleware()` allows `https://llm.pphui8.com` with credentials.
 3. Public routes are handled directly.
 4. Protected routes pass through `auth.AuthMiddleware()`.
-5. Handlers construct repositories/services and call the service layer.
-6. Repositories use the global Postgres connection in `db.Instance`.
-7. Auth refresh-token state is stored through `auth.GlobalTokenStore`.
+5. Handlers use dependencies from `handler.App` and call the service layer.
+6. Repositories use the startup-created Postgres connection.
+7. Auth refresh-token state is stored through the startup-created Redis token store.
 8. Chat requests call Gemini and persist conversation history.
 
 ## Package Responsibilities
 
 | Package | Responsibility |
 | :--- | :--- |
-| `cmd/long` | Application entry point. Initializes logger, loads `env.yaml`, initializes Redis/Postgres, builds the Gin router, and starts the server. |
+| `cmd/long` | Application entry point. Initializes logger, loads `env.yaml`, initializes Redis/Postgres/repositories/services, builds the Gin router, and starts the server. |
 | `auth` | JWT generation/validation, password HMAC hashing, auth middleware, and Redis token store. |
-| `db` | Initializes the global Postgres connection pool as `db.Instance`. |
+| `db` | Opens and verifies the Postgres connection pool. |
 | `domain` | Request/response structs, config structs, and database-facing domain models. |
-| `handler` | Gin HTTP handlers for auth, health checks, protected resource access, and Gemini chat/conversation APIs. |
-| `logger` | Global Zap logger and Gin request logging middleware. |
+| `handler` | Application container and Gin HTTP handlers for auth, health checks, protected resource access, and Gemini chat/conversation APIs. |
+| `logger` | Zap logger construction and Gin request logging middleware. |
 | `repository` | Postgres access for users, conversations, and messages. |
 | `router` | Route registration and CORS middleware. |
-| `service` | Chat business logic: conversation ownership checks, message persistence, history assembly, Gemini calls, and streaming. |
+| `provider` | Concrete chat provider adapters, currently Gemini through `langchaingo`. |
+| `service` | Provider-agnostic chat business logic: conversation ownership checks, message persistence, history assembly, provider calls, and streaming. |
 | `test/gemini` | Optional Gemini integration test. Skips when `GEMINI_API` is not set. |
 | `tool` | Local helper tooling, currently a password hash HTML page. |
 
@@ -59,7 +60,7 @@ Configured in `env.yaml`:
 
 Configured through environment variables:
 
-- `GEMINI_API`: Gemini API key. Required by `service.NewLLMService`.
+- `GEMINI_API`: Gemini API key. Required by the Gemini provider configured at startup.
 - `JWT_KEY`: HMAC key used to sign JWTs. If absent, current code generates a process-local random key.
 - `PASSWORD_HASH`: HMAC key used to hash/verify passwords. If absent, current code uses a default fallback key.
 - `GIN_MODE`: Gin mode, set to `release` in the deployment workflow.
@@ -152,7 +153,7 @@ For a new conversation:
 4. The user message is saved.
 5. Full conversation history is loaded.
 6. History is converted to LangChain message content.
-7. Gemini is called with streaming enabled.
+7. The configured chat provider is called with streaming enabled.
 8. Each streamed chunk is sent to the frontend as an SSE `data:` event.
 9. The full assistant response is saved after streaming finishes.
 10. A final SSE `done` event is sent with the conversation ID.
@@ -165,7 +166,7 @@ For an existing conversation:
 
 Current implementation details:
 
-- Provider/model is hardcoded to Gemini via `googleai.WithDefaultModel("gemini-3.1-flash-lite")`.
+- Provider selection is wired at startup through a `ChatProvider`; the current default provider is Gemini with model `gemini-3.1-flash-lite`.
 - The full conversation history is sent on every request.
 - There is no pagination for message loading.
 - If provider streaming fails after the user message is saved, the conversation may contain the user message without an assistant reply.
@@ -185,7 +186,7 @@ Protected:
 | Method | Path | Handler | Description |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/resource` | `HandleResource` | Simple protected resource test. |
-| `POST` | `/gemini` | `HandleGemini` | Stream a Gemini chat response over SSE. |
+| `POST` | `/gemini` | `HandleChat` | Stream a chat response over SSE. |
 | `GET` | `/conversations` | `HandleGetConversations` | List authenticated user's conversations. |
 | `GET` | `/conversations/:id/messages` | `HandleGetMessages` | List messages for a conversation owned by the authenticated user. |
 | `GET` | `/conversations/:id/delete` | `HandleDeleteConversation` | Delete a conversation owned by the authenticated user. |

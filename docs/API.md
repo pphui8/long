@@ -414,10 +414,9 @@ data: failed to generate streaming content: ...
 
 Important frontend parsing notes:
 
-- The backend currently writes raw chunk text into `data: ...`.
-- Chunks are not JSON encoded.
+- The backend streams plain text chunks as SSE `data:` lines.
+- Multiline chunks are split into multiple `data:` lines according to the SSE format.
 - The final `done` event data is JSON.
-- The current implementation can break SSE framing if a chunk contains newline characters.
 - `EventSource` cannot send custom `Authorization` headers, so use `fetch` streaming instead of `EventSource`.
 
 Frontend streaming example:
@@ -565,7 +564,6 @@ Use a custom streaming function for `/gemini`, because retrying after a partiall
 - Access token is returned in JSON, not a cookie.
 - Refresh token is HttpOnly and requires `credentials: "include"`.
 - `/conversations/:id/delete` deletes with `GET`.
-- Unauthorized access to another user's conversation may return `500` instead of `403`.
-- `/gemini` streams raw SSE data chunks, not JSON chunk payloads.
+- `/gemini` streams plain text SSE data chunks, not JSON chunk payloads.
 - There is no pagination for conversations or messages.
 - Provider/model selection is not exposed; `/gemini` always uses the backend-configured Gemini model.
