@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pphui8/long/domain"
+	"github.com/pphui8/long/llmengine"
 	"github.com/pphui8/long/logger"
 	"github.com/pphui8/long/repository"
 	"go.uber.org/zap"
@@ -24,6 +25,7 @@ type LLMService interface {
 type llmService struct {
 	repo     repository.LLMRepository
 	provider ChatProvider
+	engine   *llmengine.Engine
 	log      *zap.Logger
 }
 
@@ -32,7 +34,12 @@ func NewLLMService(repo repository.LLMRepository, provider ChatProvider, log *za
 		return nil, errors.New("chat provider is required")
 	}
 
-	return &llmService{repo: repo, provider: provider, log: log}, nil
+	engine, err := llmengine.New(provider)
+	if err != nil {
+		return nil, err
+	}
+
+	return &llmService{repo: repo, provider: provider, engine: engine, log: log}, nil
 }
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
@@ -109,22 +116,23 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		return 0, err
 	}
 
-	var fullResponse string
 	log.Info("LLM: Starting provider stream", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Int("history_messages", len(history)))
-	if err := s.provider.Stream(ctx, history, func(chunk string) error {
-		fullResponse += chunk
-		return onChunk(chunk)
-	}); err != nil {
+	result, err := s.engine.Stream(ctx, llmengine.StreamRequest{
+		Username:       username,
+		ConversationID: conversationID,
+		History:        history,
+	}, onChunk)
+	if err != nil {
 		log.Error("LLM: Provider stream failed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Error(err))
 		return 0, fmt.Errorf("failed to generate streaming content: %w", err)
 	}
-	log.Info("LLM: Provider stream completed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Int("response_bytes", len(fullResponse)))
+	log.Info("LLM: Provider stream completed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Int("response_bytes", len(result.Content)))
 
 	// Save assistant message after the provider call so the DB transaction is not held during streaming.
 	assistantMsg := domain.Message{
 		ConversationID: conversationID,
 		Role:           "assistant",
-		Content:        fullResponse,
+		Content:        result.Content,
 	}
 	if err := s.repo.SaveMessage(ctx, assistantMsg); err != nil {
 		return 0, fmt.Errorf("failed to save assistant message: %w", err)
