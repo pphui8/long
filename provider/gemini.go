@@ -48,9 +48,10 @@ func toMessageContent(history []domain.Message) []llms.MessageContent {
 	content := make([]llms.MessageContent, 0, len(history))
 	for _, msg := range history {
 		role := llms.ChatMessageTypeHuman
-		if msg.Role == "assistant" {
+		switch msg.Role {
+		case "assistant":
 			role = llms.ChatMessageTypeAI
-		} else if msg.Role == "system" {
+		case "system":
 			role = llms.ChatMessageTypeSystem
 		}
 		content = append(content, llms.TextParts(role, msg.Content))
