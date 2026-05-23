@@ -123,8 +123,9 @@ func (a *App) HandleChat(c *gin.Context) {
 		return
 	}
 
+	generationBaseCtx := context.WithoutCancel(c.Request.Context())
 	if req.ConversationID != nil {
-		if err := a.LLMService.ValidateConversationAccess(c.Request.Context(), username.(string), *req.ConversationID); err != nil {
+		if err := a.LLMService.ValidateConversationAccess(generationBaseCtx, username.(string), *req.ConversationID); err != nil {
 			log.Warn("APP: Chat conversation access denied", zap.String("username", username.(string)), zap.Int("convID", *req.ConversationID), zap.Error(err))
 			respondError(c, llmErrorStatus(err), llmErrorCode(err), llmClientErrorMessage(err))
 			return
@@ -143,12 +144,18 @@ func (a *App) HandleChat(c *gin.Context) {
 		return
 	}
 
-	streamCtx, cancel := context.WithTimeout(c.Request.Context(), chatProviderTimeout)
+	streamCtx, cancel := context.WithTimeout(generationBaseCtx, chatProviderTimeout)
 	defer cancel()
 
+	clientConnected := true
 	convID, err := a.LLMService.StreamPrompt(streamCtx, username.(string), req, func(chunk string) error {
+		if !clientConnected {
+			return nil
+		}
 		if err := writeSSE(c.Writer, "", chunk); err != nil {
-			return err
+			clientConnected = false
+			log.Info("APP: Chat stream client disconnected; continuing generation", zap.String("username", username.(string)), zap.Error(err))
+			return nil
 		}
 		flusher.Flush()
 		return nil
@@ -156,14 +163,18 @@ func (a *App) HandleChat(c *gin.Context) {
 
 	if err != nil {
 		log.Error("APP: Error processing chat stream", zap.String("username", username.(string)), zap.Error(err))
-		_ = writeSSEJSON(c.Writer, "error", gin.H{"error": apiError{Code: llmErrorCode(err), Message: llmClientErrorMessage(err), RequestID: logger.RequestIDFromGin(c)}})
-		flusher.Flush()
+		if clientConnected {
+			_ = writeSSEJSON(c.Writer, "error", gin.H{"error": apiError{Code: llmErrorCode(err), Message: llmClientErrorMessage(err), RequestID: logger.RequestIDFromGin(c)}})
+			flusher.Flush()
+		}
 		return
 	}
 
 	// Send the final conversation ID
-	_ = writeSSEJSON(c.Writer, "done", gin.H{"data": gin.H{"conversation_id": convID}})
-	flusher.Flush()
+	if clientConnected {
+		_ = writeSSEJSON(c.Writer, "done", gin.H{"data": gin.H{"conversation_id": convID}})
+		flusher.Flush()
+	}
 }
 
 func (a *App) HandleGetConversations(c *gin.Context) {
