@@ -6,12 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/llmengine"
 	"github.com/pphui8/long/logger"
 	"github.com/pphui8/long/repository"
 	"go.uber.org/zap"
+)
+
+const (
+	conversationSummaryTokenInterval = 20000
 )
 
 type LLMService interface {
@@ -137,13 +142,14 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 			ConversationID: conversationID,
 			Role:           "user",
 			Content:        req.Prompt,
+			TokenCount:     estimateTokenCount(req.Prompt),
 		}
 		if err := txRepo.SaveMessage(ctx, userMsg); err != nil {
 			return fmt.Errorf("failed to save user message: %w", err)
 		}
 
-		// Get conversation history
-		history, err = txRepo.GetMessagesByConversationID(ctx, conversationID)
+		// Get conversation history as the latest summary checkpoint plus only new raw messages.
+		history, err = buildHistory(ctx, txRepo, conversationID)
 		if err != nil {
 			return fmt.Errorf("failed to get history: %w", err)
 		}
@@ -170,12 +176,156 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		ConversationID: conversationID,
 		Role:           "assistant",
 		Content:        result.Content,
+		TokenCount:     estimateTokenCount(result.Content),
 	}
 	if err := s.repo.SaveMessage(ctx, assistantMsg); err != nil {
 		return 0, fmt.Errorf("failed to save assistant message: %w", err)
 	}
+	if err := s.summarizeConversationIfNeeded(ctx, provider, conversationID); err != nil {
+		log.Warn("LLM: Conversation summarization failed", zap.Int("conversation_id", conversationID), zap.String("model", model), zap.String("provider", provider.Name()), zap.Error(err))
+	}
 
 	return conversationID, nil
+}
+
+func buildHistory(ctx context.Context, repo repository.LLMRepository, conversationID int) ([]domain.Message, error) {
+	latestSummary, err := repo.GetLatestConversationSummary(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return repo.GetMessagesByConversationID(ctx, conversationID)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	messages, err := repo.GetMessagesByConversationIDAfterID(ctx, conversationID, latestSummary.SummarizedThroughMessageID)
+	if err != nil {
+		return nil, err
+	}
+
+	history := make([]domain.Message, 0, len(messages)+1)
+	history = append(history, domain.Message{
+		ConversationID: conversationID,
+		Role:           "system",
+		Content:        "Conversation summary so far:\n" + latestSummary.Summary,
+		TokenCount:     estimateTokenCount(latestSummary.Summary),
+	})
+	history = append(history, messages...)
+	return history, nil
+}
+
+func (s *llmService) summarizeConversationIfNeeded(ctx context.Context, provider ChatProvider, conversationID int) error {
+	latestSummary, err := s.repo.GetLatestConversationSummary(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		latestSummary = nil
+	} else if err != nil {
+		return err
+	}
+
+	afterMessageID := 0
+	cumulativeTokenCount := 0
+	previousSummary := ""
+	if latestSummary != nil {
+		afterMessageID = latestSummary.SummarizedThroughMessageID
+		cumulativeTokenCount = latestSummary.SummarizedTokenCount
+		previousSummary = latestSummary.Summary
+	}
+
+	messages, err := s.repo.GetMessagesByConversationIDAfterID(ctx, conversationID, afterMessageID)
+	if err != nil {
+		return err
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+
+	newTokenCount := tokenCount(messages)
+	if newTokenCount < conversationSummaryTokenInterval {
+		return nil
+	}
+
+	summary, err := generateConversationSummary(ctx, provider, previousSummary, messages)
+	if err != nil {
+		return err
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return errors.New("empty conversation summary")
+	}
+
+	lastMessage := messages[len(messages)-1]
+	return s.repo.SaveConversationSummary(ctx, domain.ConversationSummary{
+		ConversationID:             conversationID,
+		Summary:                    summary,
+		SummarizedThroughMessageID: lastMessage.ID,
+		SummarizedTokenCount:       cumulativeTokenCount + newTokenCount,
+	})
+}
+
+func generateConversationSummary(ctx context.Context, provider ChatProvider, previousSummary string, messages []domain.Message) (string, error) {
+	var b strings.Builder
+	if strings.TrimSpace(previousSummary) != "" {
+		b.WriteString("Previous summary:\n")
+		b.WriteString(previousSummary)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("New conversation messages:\n")
+	for _, msg := range messages {
+		b.WriteString(strings.ToUpper(msg.Role))
+		b.WriteString(": ")
+		b.WriteString(msg.Content)
+		b.WriteString("\n\n")
+	}
+
+	prompt := []domain.Message{
+		{
+			Role: "system",
+			Content: strings.Join([]string{
+				"You summarize long chat conversations for future LLM context.",
+				"Create one concise but complete rolling summary that preserves decisions, facts, constraints, user preferences, unresolved tasks, and important code or data references.",
+				"Merge the previous summary with the new messages. Do not mention that you are summarizing.",
+			}, " "),
+		},
+		{
+			Role:    "user",
+			Content: b.String(),
+		},
+	}
+
+	var summary strings.Builder
+	if err := provider.Stream(ctx, prompt, func(chunk string) error {
+		_, err := summary.WriteString(chunk)
+		return err
+	}); err != nil {
+		return "", err
+	}
+	return summary.String(), nil
+}
+
+func tokenCount(messages []domain.Message) int {
+	total := 0
+	for _, msg := range messages {
+		if msg.TokenCount > 0 {
+			total += msg.TokenCount
+			continue
+		}
+		total += estimateTokenCount(msg.Content)
+	}
+	return total
+}
+
+func estimateTokenCount(content string) int {
+	if content == "" {
+		return 0
+	}
+	runes := utf8.RuneCountInString(content)
+	tokens := runes / 4
+	if runes%4 != 0 {
+		tokens++
+	}
+	if tokens == 0 {
+		return 1
+	}
+	return tokens
 }
 
 func (s *llmService) getOwnedConversation(ctx context.Context, username string, conversationID int) (*domain.Conversation, error) {

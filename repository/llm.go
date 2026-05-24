@@ -16,6 +16,9 @@ type LLMRepository interface {
 	GetConversationsByUsername(ctx context.Context, username string) ([]domain.Conversation, error)
 	SaveMessage(ctx context.Context, msg domain.Message) error
 	GetMessagesByConversationID(ctx context.Context, conversationID int) ([]domain.Message, error)
+	GetMessagesByConversationIDAfterID(ctx context.Context, conversationID int, afterMessageID int) ([]domain.Message, error)
+	GetLatestConversationSummary(ctx context.Context, conversationID int) (*domain.ConversationSummary, error)
+	SaveConversationSummary(ctx context.Context, summary domain.ConversationSummary) error
 	DeleteConversation(ctx context.Context, id int) error
 }
 
@@ -149,6 +152,82 @@ func (r *llmRepository) GetMessagesByConversationID(ctx context.Context, convers
 		return nil, err
 	}
 	return messages, nil
+}
+
+func (r *llmRepository) GetMessagesByConversationIDAfterID(ctx context.Context, conversationID int, afterMessageID int) ([]domain.Message, error) {
+	query := "SELECT id, conversation_id, role, content, COALESCE(token_count, 0), created_at FROM messages WHERE conversation_id = $1 AND id > $2 ORDER BY created_at ASC"
+	rows, err := r.q.QueryContext(ctx, query, conversationID, afterMessageID)
+	if err != nil {
+		logger.WithContext(r.log, ctx).Error("DB: Failed to get messages after checkpoint", zap.Int("conversation_id", conversationID), zap.Int("after_message_id", afterMessageID), zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := []domain.Message{}
+	for rows.Next() {
+		var msg domain.Message
+		if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.Role, &msg.Content, &msg.TokenCount, &msg.CreatedAt); err != nil {
+			logger.WithContext(r.log, ctx).Error("DB: Failed to scan checkpoint messages", zap.Int("conversation_id", conversationID), zap.Error(err))
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		logger.WithContext(r.log, ctx).Error("DB: Checkpoint message rows failed", zap.Int("conversation_id", conversationID), zap.Error(err))
+		return nil, err
+	}
+	return messages, nil
+}
+
+func (r *llmRepository) GetLatestConversationSummary(ctx context.Context, conversationID int) (*domain.ConversationSummary, error) {
+	var summary domain.ConversationSummary
+	query := `
+SELECT id, conversation_id, summary, summarized_through_message_id, summarized_token_count, created_at, updated_at
+FROM conversation_summaries
+WHERE conversation_id = $1
+ORDER BY summarized_through_message_id DESC
+LIMIT 1`
+	err := r.q.QueryRowContext(ctx, query, conversationID).Scan(
+		&summary.ID,
+		&summary.ConversationID,
+		&summary.Summary,
+		&summary.SummarizedThroughMessageID,
+		&summary.SummarizedTokenCount,
+		&summary.CreatedAt,
+		&summary.UpdatedAt,
+	)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			logger.WithContext(r.log, ctx).Error("DB: Failed to get latest conversation summary", zap.Int("conversation_id", conversationID), zap.Error(err))
+		}
+		return nil, err
+	}
+	return &summary, nil
+}
+
+func (r *llmRepository) SaveConversationSummary(ctx context.Context, summary domain.ConversationSummary) error {
+	query := `
+WITH inserted AS (
+	INSERT INTO conversation_summaries (conversation_id, summary, summarized_through_message_id, summarized_token_count)
+	VALUES ($1, $2, $3, $4)
+	ON CONFLICT (conversation_id, summarized_through_message_id)
+	DO UPDATE SET
+		summary = EXCLUDED.summary,
+		summarized_token_count = EXCLUDED.summarized_token_count,
+		updated_at = CURRENT_TIMESTAMP
+	RETURNING conversation_id, summary
+)
+UPDATE conversations
+SET summary = inserted.summary
+FROM inserted
+WHERE conversations.id = inserted.conversation_id`
+	_, err := r.q.ExecContext(ctx, query, summary.ConversationID, summary.Summary, summary.SummarizedThroughMessageID, summary.SummarizedTokenCount)
+	if err != nil {
+		logger.WithContext(r.log, ctx).Error("DB: Failed to save conversation summary", zap.Int("conversation_id", summary.ConversationID), zap.Int("summarized_through_message_id", summary.SummarizedThroughMessageID), zap.Error(err))
+		return err
+	}
+	logger.WithContext(r.log, ctx).Info("DB: Saved conversation summary", zap.Int("conversation_id", summary.ConversationID), zap.Int("summarized_through_message_id", summary.SummarizedThroughMessageID))
+	return nil
 }
 
 func (r *llmRepository) DeleteConversation(ctx context.Context, id int) error {
