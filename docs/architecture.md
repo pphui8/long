@@ -145,20 +145,21 @@ Indexes:
 
 ## Chat Flow
 
-`POST /gemini` is the main chat endpoint.
+`POST /post` is the main chat endpoint. The request body selects the model with `model`; currently the only supported value is `"gemini"`.
 
 For a new conversation:
 
 1. The request omits `conversation_id`.
-2. The service creates a conversation owned by the authenticated username.
-3. The conversation title is derived from the prompt.
-4. The user message is saved.
-5. Full conversation history is loaded.
-6. History is converted to LangChain message content.
-7. The configured chat provider is called with streaming enabled.
-8. Each streamed chunk is sent to the frontend as an SSE `data:` event.
-9. The full assistant response is saved after streaming finishes.
-10. A final SSE `done` event is sent with the conversation ID.
+2. The requested model is resolved to a configured chat provider.
+3. The service creates a conversation owned by the authenticated username.
+4. The conversation title is derived from the prompt.
+5. The user message is saved.
+6. Full conversation history is loaded.
+7. History is converted to LangChain message content.
+8. The configured chat provider is called with streaming enabled.
+9. Each streamed chunk is sent to the frontend as an SSE `data:` event.
+10. The full assistant response is saved after streaming finishes.
+11. A final SSE `done` event is sent with the conversation ID.
 
 For an existing conversation:
 
@@ -168,10 +169,10 @@ For an existing conversation:
 
 Current implementation details:
 
-- Provider selection is wired at startup through a `ChatProvider`; the current default provider is Gemini with model `gemini-3.1-flash-lite`.
+- Provider selection is request-driven through `domain.LLMRequest.Model` and resolved against startup-registered `ChatProvider` instances. The only registered model is currently `gemini`, backed by Gemini model `gemini-3.1-flash-lite`.
 - The full conversation history is sent on every request.
 - There is no pagination for message loading.
-- Chat persistence runs inside a transaction; if provider streaming or assistant-message persistence fails, the conversation/user-message writes from that chat attempt are rolled back.
+- Conversation and user-message persistence happens before provider streaming; the assistant message is saved after streaming succeeds.
 
 ## HTTP Routes
 
@@ -188,7 +189,8 @@ Protected:
 | Method | Path | Handler | Description |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/resource` | `HandleResource` | Simple protected resource test. |
-| `POST` | `/gemini` | `HandleChat` | Stream a chat response over SSE. |
+| `POST` | `/post` | `HandleChat` | Stream a chat response over SSE. |
+| `POST` | `/gemini` | `HandleChat` | Compatibility alias for `/post`. |
 | `GET` | `/conversations` | `HandleGetConversations` | List authenticated user's conversations. |
 | `GET` | `/conversations/:id/messages` | `HandleGetMessages` | List messages for a conversation owned by the authenticated user. |
 | `GET` | `/conversations/:id/delete` | `HandleDeleteConversation` | Delete a conversation owned by the authenticated user. |

@@ -75,7 +75,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to initialize chat provider", zap.String("provider", provider.GeminiProviderName), zap.Error(err))
 	}
-	llmSvc, err := service.NewLLMService(llmRepo, chatProvider, log)
+	llmSvc, err := service.NewLLMServiceWithProviders(llmRepo, []service.ChatProvider{chatProvider}, log)
 	if err != nil {
 		log.Fatal("Failed to initialize LLM service", zap.Error(err))
 	}

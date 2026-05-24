@@ -4,6 +4,7 @@ import "time"
 
 type LLMRequest struct {
 	ConversationID *int   `json:"conversation_id"` // Optional: if provided, continue the conversation
+	Model          string `json:"model" binding:"required"`
 	Prompt         string `json:"prompt" binding:"required"`
 }
 

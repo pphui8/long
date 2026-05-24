@@ -114,12 +114,18 @@ func (a *App) HandleChat(c *gin.Context) {
 		return
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
+	req.Model = strings.TrimSpace(req.Model)
 	if req.Prompt == "" {
 		respondError(c, http.StatusBadRequest, "invalid_prompt", "prompt is required")
 		return
 	}
 	if len([]rune(req.Prompt)) > maxPromptRunes {
 		respondError(c, http.StatusBadRequest, "prompt_too_large", fmt.Sprintf("prompt must be at most %d characters", maxPromptRunes))
+		return
+	}
+	if err := a.LLMService.ValidateModel(req.Model); err != nil {
+		log.Warn("APP: Chat request model validation failed", zap.String("model", req.Model), zap.Error(err))
+		respondError(c, llmErrorStatus(err), llmErrorCode(err), llmClientErrorMessage(err))
 		return
 	}
 

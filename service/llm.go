@@ -20,13 +20,14 @@ type LLMService interface {
 	GetMessages(ctx context.Context, username string, conversationID int) ([]domain.Message, error)
 	DeleteConversation(ctx context.Context, username string, conversationID int) error
 	ValidateConversationAccess(ctx context.Context, username string, conversationID int) error
+	ValidateModel(model string) error
 }
 
 type llmService struct {
-	repo     repository.LLMRepository
-	provider ChatProvider
-	engine   *llmengine.Engine
-	log      *zap.Logger
+	repo      repository.LLMRepository
+	providers map[string]ChatProvider
+	engines   map[string]*llmengine.Engine
+	log       *zap.Logger
 }
 
 func NewLLMService(repo repository.LLMRepository, provider ChatProvider, log *zap.Logger) (LLMService, error) {
@@ -34,12 +35,37 @@ func NewLLMService(repo repository.LLMRepository, provider ChatProvider, log *za
 		return nil, errors.New("chat provider is required")
 	}
 
-	engine, err := llmengine.New(provider)
-	if err != nil {
-		return nil, err
+	return NewLLMServiceWithProviders(repo, []ChatProvider{provider}, log)
+}
+
+func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatProvider, log *zap.Logger) (LLMService, error) {
+	if len(providers) == 0 {
+		return nil, errors.New("at least one chat provider is required")
 	}
 
-	return &llmService{repo: repo, provider: provider, engine: engine, log: log}, nil
+	providerByModel := make(map[string]ChatProvider, len(providers))
+	engineByModel := make(map[string]*llmengine.Engine, len(providers))
+	for _, provider := range providers {
+		if provider == nil {
+			return nil, errors.New("chat provider is required")
+		}
+		model := strings.TrimSpace(provider.Name())
+		if model == "" {
+			return nil, errors.New("chat provider name is required")
+		}
+		if _, exists := providerByModel[model]; exists {
+			return nil, fmt.Errorf("duplicate chat provider model %q", model)
+		}
+
+		engine, err := llmengine.New(provider)
+		if err != nil {
+			return nil, err
+		}
+		providerByModel[model] = provider
+		engineByModel[model] = engine
+	}
+
+	return &llmService{repo: repo, providers: providerByModel, engines: engineByModel, log: log}, nil
 }
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
@@ -67,12 +93,23 @@ func (s *llmService) ValidateConversationAccess(ctx context.Context, username st
 	return err
 }
 
+func (s *llmService) ValidateModel(model string) error {
+	_, _, err := s.providerForModel(strings.TrimSpace(model))
+	return err
+}
+
 func (s *llmService) StreamPrompt(ctx context.Context, username string, req domain.LLMRequest, onChunk func(string) error) (int, error) {
 	if err := validateLLMRequest(req); err != nil {
 		return 0, err
 	}
 
 	log := logger.WithContext(s.log, ctx)
+	model := strings.TrimSpace(req.Model)
+	provider, engine, err := s.providerForModel(model)
+	if err != nil {
+		return 0, err
+	}
+
 	var conversationID int
 	var history []domain.Message
 	if err := s.repo.WithTx(ctx, func(txRepo repository.LLMRepository) error {
@@ -116,17 +153,17 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		return 0, err
 	}
 
-	log.Info("LLM: Starting provider stream", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Int("history_messages", len(history)))
-	result, err := s.engine.Stream(ctx, llmengine.StreamRequest{
+	log.Info("LLM: Starting provider stream", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("model", model), zap.String("provider", provider.Name()), zap.Int("history_messages", len(history)))
+	result, err := engine.Stream(ctx, llmengine.StreamRequest{
 		Username:       username,
 		ConversationID: conversationID,
 		History:        history,
 	}, onChunk)
 	if err != nil {
-		log.Error("LLM: Provider stream failed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Error(err))
+		log.Error("LLM: Provider stream failed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("model", model), zap.String("provider", provider.Name()), zap.Error(err))
 		return 0, fmt.Errorf("failed to generate streaming content: %w", err)
 	}
-	log.Info("LLM: Provider stream completed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("provider", s.provider.Name()), zap.Int("response_bytes", len(result.Content)))
+	log.Info("LLM: Provider stream completed", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("model", model), zap.String("provider", provider.Name()), zap.Int("response_bytes", len(result.Content)))
 
 	// Save assistant message after the provider call so the DB transaction is not held during streaming.
 	assistantMsg := domain.Message{
@@ -143,6 +180,21 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 
 func (s *llmService) getOwnedConversation(ctx context.Context, username string, conversationID int) (*domain.Conversation, error) {
 	return getOwnedConversation(ctx, s.repo, username, conversationID)
+}
+
+func (s *llmService) providerForModel(model string) (ChatProvider, *llmengine.Engine, error) {
+	if model == "" {
+		return nil, nil, fmt.Errorf("model is required: %w", domain.ErrValidation)
+	}
+	provider, ok := s.providers[model]
+	if !ok {
+		return nil, nil, fmt.Errorf("unsupported model %q: %w", model, domain.ErrValidation)
+	}
+	engine, ok := s.engines[model]
+	if !ok {
+		return nil, nil, fmt.Errorf("model %q is not configured: %w", model, domain.ErrValidation)
+	}
+	return provider, engine, nil
 }
 
 func getOwnedConversation(ctx context.Context, repo repository.LLMRepository, username string, conversationID int) (*domain.Conversation, error) {
@@ -167,6 +219,9 @@ func getOwnedConversation(ctx context.Context, repo repository.LLMRepository, us
 func validateLLMRequest(req domain.LLMRequest) error {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return fmt.Errorf("prompt is required: %w", domain.ErrValidation)
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		return fmt.Errorf("model is required: %w", domain.ErrValidation)
 	}
 	if req.ConversationID != nil && *req.ConversationID <= 0 {
 		return fmt.Errorf("conversation id must be positive: %w", domain.ErrValidation)

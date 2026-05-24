@@ -23,9 +23,11 @@ func Setup(app *handler.App) *gin.Engine {
 	// Protected routes
 	protected := r.Group("/")
 	protected.Use(auth.AuthMiddleware())
+	chatAbuseProtection := ChatAbuseProtection(app.Logger)
 	{
 		protected.GET("/resource", app.HandleResource)
-		protected.POST("/gemini", GeminiAbuseProtection(app.Logger), app.HandleChat)
+		protected.POST("/post", chatAbuseProtection, app.HandleChat)
+		protected.POST("/gemini", chatAbuseProtection, app.HandleChat)
 		protected.GET("/conversations", app.HandleGetConversations)
 		protected.GET("/conversations/:id/messages", app.HandleGetMessages)
 		protected.GET("/conversations/:id/delete", app.HandleDeleteConversation)

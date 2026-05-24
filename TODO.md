@@ -2,9 +2,9 @@
 
 ## P1 - Architecture And Code Structure
 
-- [ ] Make model/provider selection part of the request and config.
-  - `domain.LLMRequest` only has `conversation_id` and `prompt`; no provider, model, temperature, system prompt, or tool options.
-  - Add a minimal explicit model/provider contract before adding more platforms.
+- [x] Make model/provider selection part of the request and config.
+  - `domain.LLMRequest` now includes `model`; no temperature, system prompt, or tool options yet.
+  - Add more providers by registering more `ChatProvider` instances at startup.
 
 ## P1 - API And Data Model
 

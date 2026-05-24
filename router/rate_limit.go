@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	geminiUserLimit     = 10
-	geminiIPLimit       = 30
-	geminiLimitWindow   = time.Minute
-	geminiCleanupWindow = 5 * time.Minute
+	chatUserLimit     = 10
+	chatIPLimit       = 30
+	chatLimitWindow   = time.Minute
+	chatCleanupWindow = 5 * time.Minute
 )
 
 type rateLimitEntry struct {
@@ -77,18 +77,18 @@ type abuseAPIError struct {
 	RequestID string `json:"request_id,omitempty"`
 }
 
-func GeminiAbuseProtection(log *zap.Logger) gin.HandlerFunc {
-	userLimiter := newFixedWindowLimiter(geminiUserLimit, geminiLimitWindow)
-	ipLimiter := newFixedWindowLimiter(geminiIPLimit, geminiLimitWindow)
+func ChatAbuseProtection(log *zap.Logger) gin.HandlerFunc {
+	userLimiter := newFixedWindowLimiter(chatUserLimit, chatLimitWindow)
+	ipLimiter := newFixedWindowLimiter(chatIPLimit, chatLimitWindow)
 	lastCleanup := time.Now()
 	var cleanupMu sync.Mutex
 
 	return func(c *gin.Context) {
 		now := time.Now()
 		cleanupMu.Lock()
-		if now.Sub(lastCleanup) > geminiCleanupWindow {
-			userLimiter.Cleanup(now, geminiCleanupWindow)
-			ipLimiter.Cleanup(now, geminiCleanupWindow)
+		if now.Sub(lastCleanup) > chatCleanupWindow {
+			userLimiter.Cleanup(now, chatCleanupWindow)
+			ipLimiter.Cleanup(now, chatCleanupWindow)
 			lastCleanup = now
 		}
 		cleanupMu.Unlock()
@@ -128,7 +128,7 @@ func abortRateLimited(c *gin.Context, fallback *zap.Logger, retryAfter time.Dura
 	}
 
 	c.Header("Retry-After", strconv.Itoa(retrySeconds))
-	logger.FromGin(c, fallback).Warn("APP: Gemini rate limit exceeded", zap.String("scope", scope), zap.String("key", key), zap.Int("retry_after_seconds", retrySeconds))
+	logger.FromGin(c, fallback).Warn("APP: Chat rate limit exceeded", zap.String("scope", scope), zap.String("key", key), zap.Int("retry_after_seconds", retrySeconds))
 	c.JSON(http.StatusTooManyRequests, gin.H{"error": abuseAPIError{
 		Code:      "rate_limited",
 		Message:   "Too many chat requests. Try again shortly.",

@@ -366,9 +366,12 @@ export async function deleteConversation(baseUrl, accessToken, conversationId) {
 }
 ```
 
-### `POST /gemini`
+### `POST /post`
 
-Streams a Gemini chat response for a new or existing conversation.
+Streams a chat response for a new or existing conversation. The request selects the model with `model`.
+Currently the only supported model value is `"gemini"`.
+
+`POST /gemini` is still accepted as a compatibility alias.
 
 Response type:
 
@@ -380,6 +383,7 @@ Request for a new conversation:
 
 ```json
 {
+  "model": "gemini",
   "prompt": "Where is Kyoto located?"
 }
 ```
@@ -388,6 +392,7 @@ Request for an existing conversation:
 
 ```json
 {
+  "model": "gemini",
   "conversation_id": 1,
   "prompt": "What is it famous for?"
 }
@@ -433,15 +438,16 @@ Important frontend parsing notes:
 Frontend streaming example:
 
 ```js
-export async function streamGemini({
+export async function streamChat({
   baseUrl,
   accessToken,
+  model,
   prompt,
   conversationId,
   onChunk,
   onDone,
 }) {
-  const res = await fetch(`${baseUrl}/gemini`, {
+  const res = await fetch(`${baseUrl}/post`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -449,13 +455,14 @@ export async function streamGemini({
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({
+      model,
       prompt,
       ...(conversationId ? { conversation_id: conversationId } : {}),
     }),
   });
 
   if (!res.ok) {
-    let message = "Gemini request failed";
+    let message = "Chat request failed";
     try {
       const data = await res.json();
       message = data.error?.message || message;
@@ -518,7 +525,7 @@ Common error responses before streaming starts:
 
 | Status | Meaning |
 | :--- | :--- |
-| `400` | Invalid or missing JSON fields. |
+| `400` | Invalid or missing JSON fields, including unsupported `model`. |
 | `401` | Missing or invalid access token. |
 | `413` | Request body is too large. |
 | `429` | Rate limit exceeded. |
@@ -571,7 +578,7 @@ export function createApiClient(baseUrl) {
 }
 ```
 
-Use a custom streaming function for `/gemini`, because retrying after a partially started stream is not safe.
+Use a custom streaming function for `/post`, because retrying after a partially started stream is not safe.
 
 ## Current Backend Quirks To Account For
 
@@ -579,6 +586,6 @@ Use a custom streaming function for `/gemini`, because retrying after a partiall
 - Access token is returned in JSON, not a cookie.
 - Refresh token is HttpOnly and requires `credentials: "include"`.
 - `/conversations/:id/delete` deletes with `GET`.
-- `/gemini` streams plain text SSE data chunks, not JSON chunk payloads.
+- `/post` streams plain text SSE data chunks, not JSON chunk payloads.
 - There is no pagination for conversations or messages.
-- Provider/model selection is not exposed; `/gemini` always uses the backend-configured Gemini model.
+- Model selection is exposed through the request `model` field. The only supported value is currently `"gemini"`.
