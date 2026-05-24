@@ -39,7 +39,7 @@ Current router paths are not prefixed with `/api` in code. If production exposes
 | `auth` | JWT generation/validation, password HMAC hashing, auth middleware, and Redis token store. |
 | `db` | Opens and verifies the Postgres connection pool. |
 | `domain` | Request/response structs, config structs, and database-facing domain models. |
-| `handler` | Application container and Gin HTTP handlers for auth, health checks, protected resource access, and Gemini chat/conversation APIs. |
+| `handler` | Application container and Gin HTTP handlers for auth, health checks, protected resource access, and chat/conversation APIs. |
 | `logger` | Zap logger construction and Gin request logging middleware. |
 | `repository` | Postgres access for users, conversations, and messages. |
 | `router` | Route registration and CORS middleware. |
@@ -145,7 +145,13 @@ Indexes:
 
 ## Chat Flow
 
-`POST /post` is the main chat endpoint. The request body selects the model with `model`; currently the only supported value is `"gemini"`.
+`POST /chat` is the main chat endpoint. The request body selects the model with the required `model` field.
+
+Available models:
+
+| Model | Provider | Backend model | Registration |
+| :--- | :--- | :--- | :--- |
+| `gemini` | Gemini | `gemini-3.1-flash-lite` | Registered in `cmd/long/main.go` through `NewLLMServiceWithProviders`. |
 
 For a new conversation:
 
@@ -169,7 +175,7 @@ For an existing conversation:
 
 Current implementation details:
 
-- Provider selection is request-driven through `domain.LLMRequest.Model` and resolved against startup-registered `ChatProvider` instances. The only registered model is currently `gemini`, backed by Gemini model `gemini-3.1-flash-lite`.
+- Provider selection is request-driven through `domain.LLMRequest.Model` and resolved against startup-registered `ChatProvider` instances.
 - The full conversation history is sent on every request.
 - There is no pagination for message loading.
 - Conversation and user-message persistence happens before provider streaming; the assistant message is saved after streaming succeeds.
@@ -189,8 +195,7 @@ Protected:
 | Method | Path | Handler | Description |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/resource` | `HandleResource` | Simple protected resource test. |
-| `POST` | `/post` | `HandleChat` | Stream a chat response over SSE. |
-| `POST` | `/gemini` | `HandleChat` | Compatibility alias for `/post`. |
+| `POST` | `/chat` | `HandleChat` | Stream a chat response over SSE. |
 | `GET` | `/conversations` | `HandleGetConversations` | List authenticated user's conversations. |
 | `GET` | `/conversations/:id/messages` | `HandleGetMessages` | List messages for a conversation owned by the authenticated user. |
 | `GET` | `/conversations/:id/delete` | `HandleDeleteConversation` | Delete a conversation owned by the authenticated user. |

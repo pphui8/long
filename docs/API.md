@@ -366,12 +366,16 @@ export async function deleteConversation(baseUrl, accessToken, conversationId) {
 }
 ```
 
-### `POST /post`
+### `POST /chat`
 
 Streams a chat response for a new or existing conversation. The request selects the model with `model`.
-Currently the only supported model value is `"gemini"`.
+The `model` field is required.
 
-`POST /gemini` is still accepted as a compatibility alias.
+Available models:
+
+| Model | Provider | Backend model | Notes |
+| :--- | :--- | :--- | :--- |
+| `gemini` | Gemini | `gemini-3.1-flash-lite` | Only supported model currently. |
 
 Response type:
 
@@ -447,7 +451,7 @@ export async function streamChat({
   onChunk,
   onDone,
 }) {
-  const res = await fetch(`${baseUrl}/post`, {
+  const res = await fetch(`${baseUrl}/chat`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -525,7 +529,7 @@ Common error responses before streaming starts:
 
 | Status | Meaning |
 | :--- | :--- |
-| `400` | Invalid or missing JSON fields, including unsupported `model`. |
+| `400` | Invalid or missing JSON fields, missing `model`, or unsupported `model`. |
 | `401` | Missing or invalid access token. |
 | `413` | Request body is too large. |
 | `429` | Rate limit exceeded. |
@@ -578,7 +582,7 @@ export function createApiClient(baseUrl) {
 }
 ```
 
-Use a custom streaming function for `/post`, because retrying after a partially started stream is not safe.
+Use a custom streaming function for `/chat`, because retrying after a partially started stream is not safe.
 
 ## Current Backend Quirks To Account For
 
@@ -586,6 +590,6 @@ Use a custom streaming function for `/post`, because retrying after a partially 
 - Access token is returned in JSON, not a cookie.
 - Refresh token is HttpOnly and requires `credentials: "include"`.
 - `/conversations/:id/delete` deletes with `GET`.
-- `/post` streams plain text SSE data chunks, not JSON chunk payloads.
+- `/chat` streams plain text SSE data chunks, not JSON chunk payloads.
 - There is no pagination for conversations or messages.
-- Model selection is exposed through the request `model` field. The only supported value is currently `"gemini"`.
+- Model selection is exposed through the required request `model` field. See the available models table under `POST /chat`.

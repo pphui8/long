@@ -26,8 +26,7 @@ func Setup(app *handler.App) *gin.Engine {
 	chatAbuseProtection := ChatAbuseProtection(app.Logger)
 	{
 		protected.GET("/resource", app.HandleResource)
-		protected.POST("/post", chatAbuseProtection, app.HandleChat)
-		protected.POST("/gemini", chatAbuseProtection, app.HandleChat)
+		protected.POST("/chat", chatAbuseProtection, app.HandleChat)
 		protected.GET("/conversations", app.HandleGetConversations)
 		protected.GET("/conversations/:id/messages", app.HandleGetMessages)
 		protected.GET("/conversations/:id/delete", app.HandleDeleteConversation)
