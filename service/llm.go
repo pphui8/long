@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	conversationSummaryTokenInterval = 20000
+	conversationSummaryTokenInterval = 2000
 )
 
 type LLMService interface {
