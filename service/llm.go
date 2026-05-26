@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	conversationSummaryTokenInterval = 0
+	conversationSummaryTokenInterval = 15000
 	conversationSummaryTimeout       = 45 * time.Second
 )
 
