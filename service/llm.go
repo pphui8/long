@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pphui8/long/domain"
@@ -17,6 +18,7 @@ import (
 
 const (
 	conversationSummaryTokenInterval = 0
+	conversationSummaryTimeout       = 45 * time.Second
 )
 
 type LLMService interface {
@@ -181,7 +183,9 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 	if err := s.repo.SaveMessage(ctx, assistantMsg); err != nil {
 		return 0, fmt.Errorf("failed to save assistant message: %w", err)
 	}
-	if err := s.summarizeConversationIfNeeded(ctx, provider, conversationID); err != nil {
+	summaryCtx, cancelSummary := context.WithTimeout(context.WithoutCancel(ctx), conversationSummaryTimeout)
+	defer cancelSummary()
+	if err := s.summarizeConversationIfNeeded(summaryCtx, provider, conversationID); err != nil {
 		log.Warn("LLM: Conversation summarization failed", zap.Int("conversation_id", conversationID), zap.String("model", model), zap.String("provider", provider.Name()), zap.Error(err))
 	}
 
