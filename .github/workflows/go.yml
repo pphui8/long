@@ -73,11 +73,14 @@ jobs:
             docker stop long || true
             docker rm long || true
 
+            mkdir -p /app/log/long
+
             docker run -d \
               --name long \
               --restart always \
               -p 9001:9001 \
               --add-host=host.docker.internal:host-gateway \
+              -v /app/log/long:/app/log/long \
               -e GIN_MODE=release \
               -e GEMINI_API="$GEMINI_API" \
               -e JWT_KEY="$JWT_KEY" \

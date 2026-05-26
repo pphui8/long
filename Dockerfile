@@ -12,7 +12,9 @@ WORKDIR /app
 COPY --from=builder /app/long /app/long
 COPY env.yaml /app/env.yaml
 # Ensure we have CA certificates for TLS (common in Go apps)
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates \
+    && mkdir -p /app/log/long \
+    && ln -sfn /app/log/long /app/log/logs
 EXPOSE 9001
 
 CMD ["/app/long"]
