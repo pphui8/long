@@ -161,3 +161,76 @@ func TestEngineAgentAllowsEmptyInputTool(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 2", len(provider.calls))
 	}
 }
+
+func TestEngineAgentForcesCurrentTimeToolForTimeQuestion(t *testing.T) {
+	provider := &scriptedProvider{responses: []string{`It is 2026-05-27T21:00:00+09:00.`}}
+	tool := &fakeEmptyInputTool{}
+	engine, err := New(provider, WithTools(tool))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := engine.Stream(context.Background(), StreamRequest{
+		Username:       "user",
+		ConversationID: 1,
+		History:        []domain.Message{{Role: "user", Content: "What`s the time now?"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+
+	if tool.input != "Asia/Tokyo" {
+		t.Fatalf("tool input = %q, want Asia/Tokyo", tool.input)
+	}
+	if result.Content != "It is 2026-05-27T21:00:00+09:00." {
+		t.Fatalf("result = %q", result.Content)
+	}
+	if len(provider.calls) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.calls))
+	}
+	lastCall := provider.calls[0]
+	if got := lastCall[len(lastCall)-2].Content; !strings.Contains(got, "Required tool result from current_time") {
+		t.Fatalf("required tool result message = %q", got)
+	}
+}
+
+func TestEngineAgentForcesTimeAndSearchForRelativeWeatherQuestion(t *testing.T) {
+	provider := &scriptedProvider{responses: []string{`Tomorrow's forecast is grounded in search results.`}}
+	timeTool := &fakeEmptyInputTool{}
+	searchTool := &fakeTool{}
+	engine, err := New(provider, WithTools(timeTool, searchTool))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := engine.Stream(context.Background(), StreamRequest{
+		Username:       "user",
+		ConversationID: 1,
+		History:        []domain.Message{{Role: "user", Content: "What`s the weather tomorrow in Osaka, nakanoshima?"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+
+	if timeTool.input != "Asia/Tokyo" {
+		t.Fatalf("time tool input = %q, want Asia/Tokyo", timeTool.input)
+	}
+	if searchTool.input != "What`s the weather tomorrow in Osaka, nakanoshima?" {
+		t.Fatalf("search tool input = %q, want original prompt", searchTool.input)
+	}
+	if result.Content != "Tomorrow's forecast is grounded in search results." {
+		t.Fatalf("result = %q", result.Content)
+	}
+	if len(provider.calls) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.calls))
+	}
+	lastCall := provider.calls[0]
+	var sawTime, sawSearch bool
+	for _, msg := range lastCall {
+		sawTime = sawTime || strings.Contains(msg.Content, "Required tool result from current_time")
+		sawSearch = sawSearch || strings.Contains(msg.Content, "Required tool result from web_search")
+	}
+	if !sawTime || !sawSearch {
+		t.Fatalf("provider call missing required tool results: sawTime=%v sawSearch=%v", sawTime, sawSearch)
+	}
+}

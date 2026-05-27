@@ -138,17 +138,38 @@ type agentDecision struct {
 	FinalAnswer string `json:"final_answer"`
 }
 
+type forcedToolCall struct {
+	Name   string
+	Input  string
+	Reason string
+}
+
 func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChunk func(string) error) (string, error) {
 	working := append([]domain.Message{}, messages...)
 	working = appendAgentInstructions(working, e.tools)
 	log := logger.WithContext(e.log, ctx)
+	lastUser := lastUserMessage(messages)
 	log.Info("LLM Agent: Started",
 		zap.String("provider", e.provider.Name()),
 		zap.Int("max_steps", e.maxAgentSteps),
 		zap.Strings("tools", toolNames(e.tools)),
 		zap.Int("messages", len(messages)),
-		zap.String("last_user_message_preview", preview(lastUserMessage(messages))),
+		zap.String("last_user_message_preview", preview(lastUser)),
 	)
+
+	forcedCalls := inferForcedToolCalls(lastUser, e.tools)
+	if len(forcedCalls) > 0 {
+		log.Info("LLM Agent: Enforcing required tools", zap.Int("tool_calls", len(forcedCalls)))
+		updated, err := e.executeForcedToolCalls(ctx, working, forcedCalls, log)
+		if err != nil {
+			return "", err
+		}
+		working = append(updated, domain.Message{
+			Role:    "system",
+			Content: "Required tools have already been executed for this request. Answer using the tool results above. Do not use unstated current date, time, weather, or forecast values.",
+		})
+		return e.callProvider(ctx, working, onChunk)
+	}
 
 	for step := 0; step < e.maxAgentSteps; step++ {
 		stepNumber := step + 1
@@ -279,6 +300,69 @@ func (e *Engine) callProvider(ctx context.Context, messages []domain.Message, on
 	return fullResponse, err
 }
 
+func (e *Engine) executeForcedToolCalls(ctx context.Context, working []domain.Message, calls []forcedToolCall, log *zap.Logger) ([]domain.Message, error) {
+	for i, call := range calls {
+		tool, ok := e.tools[call.Name]
+		if !ok {
+			log.Warn("LLM Agent: Required tool unavailable",
+				zap.Int("forced_tool_index", i+1),
+				zap.String("tool", call.Name),
+				zap.String("reason", call.Reason),
+				zap.Strings("available_tools", toolNames(e.tools)),
+			)
+			continue
+		}
+		if strings.TrimSpace(call.Input) == "" && !allowsEmptyInput(tool) {
+			log.Warn("LLM Agent: Required tool skipped because input is empty",
+				zap.Int("forced_tool_index", i+1),
+				zap.String("tool", call.Name),
+				zap.String("reason", call.Reason),
+			)
+			continue
+		}
+
+		log.Info("LLM Agent: Executing required tool",
+			zap.Int("forced_tool_index", i+1),
+			zap.String("tool", call.Name),
+			zap.String("input", call.Input),
+			zap.String("reason", call.Reason),
+		)
+		start := time.Now()
+		result, err := tool.Execute(ctx, call.Input)
+		if err != nil {
+			log.Error("LLM Agent: Required tool failed",
+				zap.Int("forced_tool_index", i+1),
+				zap.String("tool", call.Name),
+				zap.String("input", call.Input),
+				zap.String("reason", call.Reason),
+				zap.Duration("latency", time.Since(start)),
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("%s failed: %w", call.Name, err)
+		}
+		log.Info("LLM Agent: Required tool completed",
+			zap.Int("forced_tool_index", i+1),
+			zap.String("tool", call.Name),
+			zap.String("input", call.Input),
+			zap.String("reason", call.Reason),
+			zap.Duration("latency", time.Since(start)),
+			zap.Int("result_bytes", len(result)),
+		)
+		log.Debug("LLM Agent: Required tool result",
+			zap.Int("forced_tool_index", i+1),
+			zap.String("tool", call.Name),
+			zap.String("input", call.Input),
+			zap.String("result_preview", preview(result)),
+		)
+
+		working = append(working, domain.Message{
+			Role:    "system",
+			Content: fmt.Sprintf("Required tool result from %s for %q (%s):\n%s", call.Name, call.Input, call.Reason, result),
+		})
+	}
+	return working, nil
+}
+
 func appendAgentInstructions(messages []domain.Message, tools map[string]Tool) []domain.Message {
 	var b strings.Builder
 	b.WriteString("You are an agent. Decide whether a tool is needed before answering. ")
@@ -340,6 +424,88 @@ func firstNonEmpty(values ...string) string {
 func allowsEmptyInput(tool Tool) bool {
 	emptyInputTool, ok := tool.(EmptyInputTool)
 	return ok && emptyInputTool.AllowsEmptyInput()
+}
+
+func inferForcedToolCalls(userMessage string, tools map[string]Tool) []forcedToolCall {
+	text := strings.ToLower(userMessage)
+	calls := []forcedToolCall{}
+
+	needsCurrentTime := asksCurrentTimeOrDate(text)
+	needsWeather := asksWeather(text)
+
+	if needsCurrentTime {
+		if _, ok := tools["current_time"]; ok {
+			calls = append(calls, forcedToolCall{
+				Name:   "current_time",
+				Input:  inferTimezone(text),
+				Reason: "current time/date request",
+			})
+		}
+	}
+
+	if needsWeather {
+		if _, ok := tools["current_time"]; ok && mentionsRelativeDate(text) && !hasForcedTool(calls, "current_time") {
+			calls = append(calls, forcedToolCall{
+				Name:   "current_time",
+				Input:  inferTimezone(text),
+				Reason: "weather request with relative date",
+			})
+		}
+		if _, ok := tools["web_search"]; ok {
+			calls = append(calls, forcedToolCall{
+				Name:   "web_search",
+				Input:  strings.TrimSpace(userMessage),
+				Reason: "weather/forecast request",
+			})
+		}
+	}
+
+	return calls
+}
+
+func asksCurrentTimeOrDate(text string) bool {
+	if containsAny(text, "weather", "forecast") {
+		return false
+	}
+	return containsAny(text, "current time", "time now", "date today", "today's date", "what day", "what date") ||
+		(containsAny(text, "now", "current") && containsAny(text, "time", "date", "day"))
+}
+
+func asksWeather(text string) bool {
+	return containsAny(text, "weather", "forecast", "temperature")
+}
+
+func mentionsRelativeDate(text string) bool {
+	return containsAny(text, "today", "tomorrow", "tonight", "now", "current")
+}
+
+func inferTimezone(text string) string {
+	switch {
+	case containsAny(text, "utc", "gmt"):
+		return "UTC"
+	case containsAny(text, "osaka", "nakanoshima", "tokyo", "japan", "jst"):
+		return "Asia/Tokyo"
+	default:
+		return "Asia/Tokyo"
+	}
+}
+
+func containsAny(text string, values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(text, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasForcedTool(calls []forcedToolCall, name string) bool {
+	for _, call := range calls {
+		if call.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func toolNames(tools map[string]Tool) []string {
