@@ -44,6 +44,27 @@ func (t *fakeTool) Execute(ctx context.Context, input string) (string, error) {
 	return "source says current answer", nil
 }
 
+type fakeEmptyInputTool struct {
+	input string
+}
+
+func (t *fakeEmptyInputTool) Name() string {
+	return "current_time"
+}
+
+func (t *fakeEmptyInputTool) Description() string {
+	return "test time"
+}
+
+func (t *fakeEmptyInputTool) AllowsEmptyInput() bool {
+	return true
+}
+
+func (t *fakeEmptyInputTool) Execute(ctx context.Context, input string) (string, error) {
+	t.input = input
+	return "Current time: 2026-05-27T12:00:00Z", nil
+}
+
 func TestEngineAgentCallsToolAndReturnsFinalAnswer(t *testing.T) {
 	provider := &scriptedProvider{responses: []string{
 		`{"action":"web_search","action_input":"latest release"}`,
@@ -107,5 +128,36 @@ func TestEngineAgentReturnsDirectFinalAnswer(t *testing.T) {
 	}
 	if len(provider.calls) != 1 {
 		t.Fatalf("provider calls = %d, want 1", len(provider.calls))
+	}
+}
+
+func TestEngineAgentAllowsEmptyInputTool(t *testing.T) {
+	provider := &scriptedProvider{responses: []string{
+		`{"action":"current_time"}`,
+		`{"final_answer":"It is noon UTC."}`,
+	}}
+	tool := &fakeEmptyInputTool{}
+	engine, err := New(provider, WithTools(tool))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := engine.Stream(context.Background(), StreamRequest{
+		Username:       "user",
+		ConversationID: 1,
+		History:        []domain.Message{{Role: "user", Content: "What time is it?"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+
+	if tool.input != "" {
+		t.Fatalf("tool input = %q, want empty", tool.input)
+	}
+	if result.Content != "It is noon UTC." {
+		t.Fatalf("result = %q", result.Content)
+	}
+	if len(provider.calls) != 2 {
+		t.Fatalf("provider calls = %d, want 2", len(provider.calls))
 	}
 }

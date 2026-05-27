@@ -160,7 +160,7 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 		}
 
 		input := strings.TrimSpace(firstNonEmpty(decision.ActionInput, decision.Query))
-		if input == "" {
+		if input == "" && !allowsEmptyInput(tool) {
 			working = append(working, domain.Message{
 				Role:    "system",
 				Content: fmt.Sprintf("Tool error: %s requires a non-empty input.", action),
@@ -202,7 +202,8 @@ func appendAgentInstructions(messages []domain.Message, tools map[string]Tool) [
 	var b strings.Builder
 	b.WriteString("You are an agent. Decide whether a tool is needed before answering. ")
 	b.WriteString("Use web_search for current events, recent facts, or questions that need outside web information. ")
-	b.WriteString("When you need a tool, respond only with compact JSON like {\"action\":\"web_search\",\"action_input\":\"search query\"}. ")
+	b.WriteString("Use current_time for questions asking for the current date or time. ")
+	b.WriteString("When you need a tool, respond only with compact JSON like {\"action\":\"web_search\",\"action_input\":\"search query\"} or {\"action\":\"current_time\",\"action_input\":\"UTC\"}. ")
 	b.WriteString("When you can answer, respond only with compact JSON like {\"final_answer\":\"answer text\"}. ")
 	b.WriteString("Available tools:\n")
 	for _, name := range toolNames(tools) {
@@ -253,6 +254,11 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func allowsEmptyInput(tool Tool) bool {
+	emptyInputTool, ok := tool.(EmptyInputTool)
+	return ok && emptyInputTool.AllowsEmptyInput()
 }
 
 func toolNames(tools map[string]Tool) []string {

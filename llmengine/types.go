@@ -36,3 +36,7 @@ type Tool interface {
 	Description() string
 	Execute(ctx context.Context, input string) (string, error)
 }
+
+type EmptyInputTool interface {
+	AllowsEmptyInput() bool
+}

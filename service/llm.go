@@ -83,19 +83,21 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 }
 
 func defaultEngineOptions() ([]llmengine.Option, error) {
+	tools := []llmengine.Tool{tool.NewCurrentTimeTool()}
+
 	tabilyAPIKey := strings.TrimSpace(os.Getenv("TABILY_API_KEY"))
 	if tabilyAPIKey == "" {
 		tabilyAPIKey = strings.TrimSpace(os.Getenv("TAVILY_API_KEY"))
 	}
-	if tabilyAPIKey == "" {
-		return nil, nil
+	if tabilyAPIKey != "" {
+		webSearch, err := tool.NewTavilySearchTool(tabilyAPIKey)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, webSearch)
 	}
 
-	webSearch, err := tool.NewTavilySearchTool(tabilyAPIKey)
-	if err != nil {
-		return nil, err
-	}
-	return []llmengine.Option{llmengine.WithTools(webSearch)}, nil
+	return []llmengine.Option{llmengine.WithTools(tools...)}, nil
 }
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
