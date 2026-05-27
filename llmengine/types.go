@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/pphui8/long/domain"
+	"go.uber.org/zap"
 )
 
 type ChatProvider interface {
@@ -16,6 +17,7 @@ type Engine struct {
 	maxAgentSteps  int
 	provider       ChatProvider
 	promptBuilder  PromptBuilder
+	log            *zap.Logger
 	tools          map[string]Tool
 }
 

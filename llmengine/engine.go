@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pphui8/long/domain"
+	"github.com/pphui8/long/logger"
+	"go.uber.org/zap"
 )
 
 const defaultMaxAgentSteps = 3
+const logPreviewLimit = 2000
 
 func New(provider ChatProvider, opts ...Option) (*Engine, error) {
 	if provider == nil {
@@ -20,6 +24,7 @@ func New(provider ChatProvider, opts ...Option) (*Engine, error) {
 
 	engine := &Engine{
 		contextBuilder: NewPassthroughContextBuilder(),
+		log:            zap.NewNop(),
 		maxAgentSteps:  defaultMaxAgentSteps,
 		provider:       provider,
 		promptBuilder:  NewBasicPromptBuilder(""),
@@ -47,6 +52,14 @@ func WithPromptBuilder(promptBuilder PromptBuilder) Option {
 func WithContextBuilder(contextBuilder ContextBuilder) Option {
 	return func(engine *Engine) {
 		engine.contextBuilder = contextBuilder
+	}
+}
+
+func WithLogger(log *zap.Logger) Option {
+	return func(engine *Engine) {
+		if log != nil {
+			engine.log = log
+		}
 	}
 }
 
@@ -128,30 +141,67 @@ type agentDecision struct {
 func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChunk func(string) error) (string, error) {
 	working := append([]domain.Message{}, messages...)
 	working = appendAgentInstructions(working, e.tools)
+	log := logger.WithContext(e.log, ctx)
+	log.Info("LLM Agent: Started",
+		zap.String("provider", e.provider.Name()),
+		zap.Int("max_steps", e.maxAgentSteps),
+		zap.Strings("tools", toolNames(e.tools)),
+		zap.Int("messages", len(messages)),
+		zap.String("last_user_message_preview", preview(lastUserMessage(messages))),
+	)
 
 	for step := 0; step < e.maxAgentSteps; step++ {
+		stepNumber := step + 1
+		callStart := time.Now()
 		raw, err := e.callProvider(ctx, working, nil)
 		if err != nil {
+			log.Error("LLM Agent: Provider decision failed", zap.Int("step", stepNumber), zap.Duration("latency", time.Since(callStart)), zap.Error(err))
 			return "", err
 		}
+		log.Debug("LLM Agent: Provider decision received",
+			zap.Int("step", stepNumber),
+			zap.Duration("latency", time.Since(callStart)),
+			zap.Int("response_bytes", len(raw)),
+			zap.String("response_preview", preview(raw)),
+		)
 
 		decision, ok := parseAgentDecision(raw)
 		if !ok {
+			log.Warn("LLM Agent: Provider returned non-JSON final response; no tool executed",
+				zap.Int("step", stepNumber),
+				zap.Int("response_bytes", len(raw)),
+				zap.String("response_preview", preview(raw)),
+			)
 			return emitFinal(raw, onChunk)
 		}
 
 		final := strings.TrimSpace(firstNonEmpty(decision.FinalAnswer, decision.Final))
 		if final != "" {
+			log.Info("LLM Agent: Final answer selected",
+				zap.Int("step", stepNumber),
+				zap.Bool("tool_executed_this_step", false),
+				zap.Int("answer_bytes", len(final)),
+				zap.String("answer_preview", preview(final)),
+			)
 			return emitFinal(final, onChunk)
 		}
 
 		action := strings.TrimSpace(decision.Action)
 		if action == "" {
+			log.Warn("LLM Agent: JSON decision had no action or final answer",
+				zap.Int("step", stepNumber),
+				zap.String("decision_preview", preview(raw)),
+			)
 			return emitFinal(raw, onChunk)
 		}
 
 		tool, ok := e.tools[action]
 		if !ok {
+			log.Warn("LLM Agent: Requested unavailable tool",
+				zap.Int("step", stepNumber),
+				zap.String("tool", action),
+				zap.Strings("available_tools", toolNames(e.tools)),
+			)
 			working = append(working, domain.Message{
 				Role:    "system",
 				Content: fmt.Sprintf("Tool error: %q is not available. Available tools: %s.", action, strings.Join(toolNames(e.tools), ", ")),
@@ -161,6 +211,10 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 
 		input := strings.TrimSpace(firstNonEmpty(decision.ActionInput, decision.Query))
 		if input == "" && !allowsEmptyInput(tool) {
+			log.Warn("LLM Agent: Requested tool with empty input",
+				zap.Int("step", stepNumber),
+				zap.String("tool", action),
+			)
 			working = append(working, domain.Message{
 				Role:    "system",
 				Content: fmt.Sprintf("Tool error: %s requires a non-empty input.", action),
@@ -168,10 +222,36 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 			continue
 		}
 
+		log.Info("LLM Agent: Executing tool",
+			zap.Int("step", stepNumber),
+			zap.String("tool", action),
+			zap.String("input", input),
+		)
+		toolStart := time.Now()
 		result, err := tool.Execute(ctx, input)
 		if err != nil {
+			log.Error("LLM Agent: Tool failed",
+				zap.Int("step", stepNumber),
+				zap.String("tool", action),
+				zap.String("input", input),
+				zap.Duration("latency", time.Since(toolStart)),
+				zap.Error(err),
+			)
 			return "", fmt.Errorf("%s failed: %w", action, err)
 		}
+		log.Info("LLM Agent: Tool completed",
+			zap.Int("step", stepNumber),
+			zap.String("tool", action),
+			zap.String("input", input),
+			zap.Duration("latency", time.Since(toolStart)),
+			zap.Int("result_bytes", len(result)),
+		)
+		log.Debug("LLM Agent: Tool result",
+			zap.Int("step", stepNumber),
+			zap.String("tool", action),
+			zap.String("input", input),
+			zap.String("result_preview", preview(result)),
+		)
 
 		working = append(working,
 			domain.Message{Role: "assistant", Content: raw},
@@ -183,6 +263,7 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 		Role:    "system",
 		Content: "Agent step limit reached. Provide the final answer now using the conversation and tool results. Do not request another tool call.",
 	})
+	log.Warn("LLM Agent: Step limit reached", zap.Int("max_steps", e.maxAgentSteps))
 	return e.callProvider(ctx, working, onChunk)
 }
 
@@ -268,4 +349,21 @@ func toolNames(tools map[string]Tool) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func preview(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= logPreviewLimit {
+		return value
+	}
+	return value[:logPreviewLimit] + "...[truncated]"
+}
+
+func lastUserMessage(messages []domain.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return messages[i].Content
+		}
+	}
+	return ""
 }

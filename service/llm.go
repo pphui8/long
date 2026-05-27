@@ -21,6 +21,7 @@ import (
 const (
 	conversationSummaryTokenInterval = 15000
 	conversationSummaryTimeout       = 45 * time.Second
+	logPreviewLimit                  = 2000
 )
 
 type LLMService interface {
@@ -52,7 +53,7 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 		return nil, errors.New("at least one chat provider is required")
 	}
 
-	engineOptions, err := defaultEngineOptions()
+	engineOptions, err := defaultEngineOptions(log)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 	return &llmService{repo: repo, providers: providerByModel, engines: engineByModel, log: log}, nil
 }
 
-func defaultEngineOptions() ([]llmengine.Option, error) {
+func defaultEngineOptions(log *zap.Logger) ([]llmengine.Option, error) {
 	tools := []llmengine.Tool{tool.NewCurrentTimeTool()}
 
 	tabilyAPIKey := strings.TrimSpace(os.Getenv("TABILY_API_KEY"))
@@ -97,7 +98,15 @@ func defaultEngineOptions() ([]llmengine.Option, error) {
 		tools = append(tools, webSearch)
 	}
 
-	return []llmengine.Option{llmengine.WithTools(tools...)}, nil
+	toolNames := make([]string, 0, len(tools))
+	for _, configuredTool := range tools {
+		toolNames = append(toolNames, configuredTool.Name())
+	}
+	if log != nil {
+		log.Info("LLM: Engine tools configured", zap.Strings("tools", toolNames), zap.Bool("web_search_enabled", tabilyAPIKey != ""))
+	}
+
+	return []llmengine.Option{llmengine.WithLogger(log), llmengine.WithTools(tools...)}, nil
 }
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
@@ -186,7 +195,15 @@ func (s *llmService) StreamPrompt(ctx context.Context, username string, req doma
 		return 0, err
 	}
 
-	log.Info("LLM: Starting provider stream", zap.String("username", username), zap.Int("conversation_id", conversationID), zap.String("model", model), zap.String("provider", provider.Name()), zap.Int("history_messages", len(history)))
+	log.Info("LLM: Starting provider stream",
+		zap.String("username", username),
+		zap.Int("conversation_id", conversationID),
+		zap.String("model", model),
+		zap.String("provider", provider.Name()),
+		zap.Int("history_messages", len(history)),
+		zap.Int("prompt_runes", utf8.RuneCountInString(req.Prompt)),
+		zap.String("prompt_preview", previewForLog(req.Prompt)),
+	)
 	result, err := engine.Stream(ctx, llmengine.StreamRequest{
 		Username:       username,
 		ConversationID: conversationID,
@@ -340,6 +357,14 @@ func tokenCount(messages []domain.Message) int {
 		total += estimateTokenCount(msg.Content)
 	}
 	return total
+}
+
+func previewForLog(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= logPreviewLimit {
+		return value
+	}
+	return value[:logPreviewLimit] + "...[truncated]"
 }
 
 func estimateTokenCount(content string) int {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,12 +39,26 @@ func Init(logPath string) *zap.Logger {
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	encoder := zapcore.NewJSONEncoder(encoderConfig)
 
+	level := zap.NewAtomicLevelAt(parseLevel(os.Getenv("LOG_LEVEL")))
 	core := zapcore.NewTee(
-		zapcore.NewCore(encoder, zapcore.AddSync(lumberjackLogger), zap.InfoLevel),
-		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zap.InfoLevel),
+		zapcore.NewCore(encoder, zapcore.AddSync(lumberjackLogger), level),
+		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), level),
 	)
 
 	return zap.New(core, zap.AddCaller())
+}
+
+func parseLevel(value string) zapcore.Level {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "debug":
+		return zap.DebugLevel
+	case "warn", "warning":
+		return zap.WarnLevel
+	case "error":
+		return zap.ErrorLevel
+	default:
+		return zap.InfoLevel
+	}
 }
 
 func WithRequestID(ctx context.Context, requestID string) context.Context {

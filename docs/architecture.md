@@ -65,6 +65,7 @@ Configured through environment variables:
 - `JWT_KEY`: HMAC key used to sign JWTs. If absent, current code generates a process-local random key.
 - `PASSWORD_HASH`: HMAC key used to hash/verify passwords. If absent, current code uses a default fallback key.
 - `GIN_MODE`: Gin mode, set to `release` in the deployment workflow.
+- `LOG_LEVEL`: Optional log level: `debug`, `info`, `warn`, or `error`. Defaults to `info`. Use `debug` to include provider decision previews and tool result previews.
 
 ## Authentication
 
