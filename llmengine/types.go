@@ -13,8 +13,10 @@ type ChatProvider interface {
 
 type Engine struct {
 	contextBuilder ContextBuilder
+	maxAgentSteps  int
 	provider       ChatProvider
 	promptBuilder  PromptBuilder
+	tools          map[string]Tool
 }
 
 type Option func(*Engine)
@@ -27,4 +29,10 @@ type StreamRequest struct {
 
 type StreamResult struct {
 	Content string
+}
+
+type Tool interface {
+	Name() string
+	Description() string
+	Execute(ctx context.Context, input string) (string, error)
 }

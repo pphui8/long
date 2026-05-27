@@ -61,6 +61,7 @@ Configured in `env.yaml`:
 Configured through environment variables:
 
 - `GEMINI_API`: Gemini API key. Required by the Gemini provider configured at startup.
+- `TABILY_API_KEY`: Tavily/Tabily web search API key. When set, chat runs through the agent loop with the `web_search` tool enabled. The code also accepts `TAVILY_API_KEY`.
 - `JWT_KEY`: HMAC key used to sign JWTs. If absent, current code generates a process-local random key.
 - `PASSWORD_HASH`: HMAC key used to hash/verify passwords. If absent, current code uses a default fallback key.
 - `GIN_MODE`: Gin mode, set to `release` in the deployment workflow.
@@ -161,8 +162,8 @@ For a new conversation:
 4. The conversation title is derived from the prompt.
 5. The user message is saved.
 6. Full conversation history is loaded.
-7. History is converted to LangChain message content.
-8. The configured chat provider is called with streaming enabled.
+7. History is prepared for the LLM engine.
+8. The configured chat provider is called through the LLM engine. When `TABILY_API_KEY` or `TAVILY_API_KEY` is set, the engine can first call the `web_search` tool and then stream the final answer.
 9. Each streamed chunk is sent to the frontend as an SSE `data:` event.
 10. The full assistant response is saved after streaming finishes.
 11. A final SSE `done` event is sent with the conversation ID.
@@ -218,4 +219,4 @@ The deployment command:
 - Runs the container as `long`.
 - Publishes `9001:9001`.
 - Adds `host.docker.internal` for host access from Linux Docker.
-- Sets `GIN_MODE`, `GEMINI_API`, `JWT_KEY`, and `PASSWORD_HASH`.
+- Sets `GIN_MODE`, `GEMINI_API`, `TABILY_API_KEY`, `JWT_KEY`, and `PASSWORD_HASH`.

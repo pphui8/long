@@ -88,8 +88,8 @@ func (r *summaryTestRepo) DeleteConversation(ctx context.Context, id int) error 
 func TestSummarizeConversationIfNeededSummarizesAtZeroInterval(t *testing.T) {
 	repo := &summaryTestRepo{
 		messages: []domain.Message{
-			{ID: 10, ConversationID: 7, Role: "user", Content: "hello", TokenCount: 2},
-			{ID: 11, ConversationID: 7, Role: "assistant", Content: "hi", TokenCount: 1},
+			{ID: 10, ConversationID: 7, Role: "user", Content: "hello", TokenCount: 10000},
+			{ID: 11, ConversationID: 7, Role: "assistant", Content: "hi", TokenCount: 6000},
 		},
 	}
 	svc := &llmService{repo: repo}
@@ -107,7 +107,7 @@ func TestSummarizeConversationIfNeededSummarizesAtZeroInterval(t *testing.T) {
 	if repo.savedSummary.SummarizedThroughMessageID != 11 {
 		t.Fatalf("summarized through message ID = %d, want 11", repo.savedSummary.SummarizedThroughMessageID)
 	}
-	if repo.savedSummary.SummarizedTokenCount != 3 {
-		t.Fatalf("summarized token count = %d, want 3", repo.savedSummary.SummarizedTokenCount)
+	if repo.savedSummary.SummarizedTokenCount != 16000 {
+		t.Fatalf("summarized token count = %d, want 16000", repo.savedSummary.SummarizedTokenCount)
 	}
 }

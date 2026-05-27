@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/llmengine"
+	"github.com/pphui8/long/llmengine/tool"
 	"github.com/pphui8/long/logger"
 	"github.com/pphui8/long/repository"
 	"go.uber.org/zap"
@@ -50,6 +52,11 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 		return nil, errors.New("at least one chat provider is required")
 	}
 
+	engineOptions, err := defaultEngineOptions()
+	if err != nil {
+		return nil, err
+	}
+
 	providerByModel := make(map[string]ChatProvider, len(providers))
 	engineByModel := make(map[string]*llmengine.Engine, len(providers))
 	for _, provider := range providers {
@@ -64,7 +71,7 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 			return nil, fmt.Errorf("duplicate chat provider model %q", model)
 		}
 
-		engine, err := llmengine.New(provider)
+		engine, err := llmengine.New(provider, engineOptions...)
 		if err != nil {
 			return nil, err
 		}
@@ -73,6 +80,22 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 	}
 
 	return &llmService{repo: repo, providers: providerByModel, engines: engineByModel, log: log}, nil
+}
+
+func defaultEngineOptions() ([]llmengine.Option, error) {
+	tabilyAPIKey := strings.TrimSpace(os.Getenv("TABILY_API_KEY"))
+	if tabilyAPIKey == "" {
+		tabilyAPIKey = strings.TrimSpace(os.Getenv("TAVILY_API_KEY"))
+	}
+	if tabilyAPIKey == "" {
+		return nil, nil
+	}
+
+	webSearch, err := tool.NewTavilySearchTool(tabilyAPIKey)
+	if err != nil {
+		return nil, err
+	}
+	return []llmengine.Option{llmengine.WithTools(webSearch)}, nil
 }
 
 func (s *llmService) GetConversations(ctx context.Context, username string) ([]domain.Conversation, error) {
