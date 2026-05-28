@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	_ "time/tzdata"
 )
 
 type CurrentTimeTool struct {
