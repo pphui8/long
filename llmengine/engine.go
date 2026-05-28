@@ -2,19 +2,19 @@ package llmengine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/logger"
+	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/chains"
 	"go.uber.org/zap"
 )
 
-const defaultMaxAgentSteps = 3
+const defaultMaxAgentSteps = 5
 const logPreviewLimit = 2000
 
 func New(provider ChatProvider, opts ...Option) (*Engine, error) {
@@ -28,7 +28,7 @@ func New(provider ChatProvider, opts ...Option) (*Engine, error) {
 		maxAgentSteps:  defaultMaxAgentSteps,
 		provider:       provider,
 		promptBuilder:  NewBasicPromptBuilder(""),
-		tools:          map[string]Tool{},
+		tools:          []Tool{},
 	}
 	for _, opt := range opts {
 		opt(engine)
@@ -65,14 +65,11 @@ func WithLogger(log *zap.Logger) Option {
 
 func WithTools(tools ...Tool) Option {
 	return func(engine *Engine) {
-		if engine.tools == nil {
-			engine.tools = map[string]Tool{}
-		}
 		for _, tool := range tools {
 			if tool == nil || strings.TrimSpace(tool.Name()) == "" {
 				continue
 			}
-			engine.tools[tool.Name()] = tool
+			engine.tools = append(engine.tools, tool)
 		}
 	}
 }
@@ -130,23 +127,7 @@ func (e *Engine) Stream(ctx context.Context, req StreamRequest, onChunk func(str
 	return &StreamResult{Content: fullResponse}, nil
 }
 
-type agentDecision struct {
-	Action      string `json:"action"`
-	ActionInput string `json:"action_input"`
-	Query       string `json:"query"`
-	Final       string `json:"final"`
-	FinalAnswer string `json:"final_answer"`
-}
-
-type forcedToolCall struct {
-	Name   string
-	Input  string
-	Reason string
-}
-
 func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChunk func(string) error) (string, error) {
-	working := append([]domain.Message{}, messages...)
-	working = appendAgentInstructions(working, e.tools)
 	log := logger.WithContext(e.log, ctx)
 	lastUser := lastUserMessage(messages)
 	log.Info("LLM Agent: Started",
@@ -157,135 +138,25 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 		zap.String("last_user_message_preview", preview(lastUser)),
 	)
 
-	forcedCalls := inferForcedToolCalls(lastUser, e.tools)
-	if len(forcedCalls) > 0 {
-		log.Info("LLM Agent: Enforcing required tools", zap.Int("tool_calls", len(forcedCalls)))
-		updated, err := e.executeForcedToolCalls(ctx, working, forcedCalls, log)
-		if err != nil {
-			return "", err
-		}
-		working = append(updated, domain.Message{
-			Role:    "system",
-			Content: "Required tools have already been executed for this request. Answer using the tool results above. Do not use unstated current date, time, weather, or forecast values.",
-		})
-		return e.callProvider(ctx, working, onChunk)
+	modelProvider, ok := e.provider.(ModelProvider)
+	if !ok {
+		return "", fmt.Errorf("chat provider %q does not expose a LangChainGo model", e.provider.Name())
 	}
 
-	for step := 0; step < e.maxAgentSteps; step++ {
-		stepNumber := step + 1
-		callStart := time.Now()
-		raw, err := e.callProvider(ctx, working, nil)
-		if err != nil {
-			log.Error("LLM Agent: Provider decision failed", zap.Int("step", stepNumber), zap.Duration("latency", time.Since(callStart)), zap.Error(err))
-			return "", err
-		}
-		log.Debug("LLM Agent: Provider decision received",
-			zap.Int("step", stepNumber),
-			zap.Duration("latency", time.Since(callStart)),
-			zap.Int("response_bytes", len(raw)),
-			zap.String("response_preview", preview(raw)),
-		)
-
-		decision, ok := parseAgentDecision(raw)
-		if !ok {
-			log.Warn("LLM Agent: Provider returned non-JSON final response; no tool executed",
-				zap.Int("step", stepNumber),
-				zap.Int("response_bytes", len(raw)),
-				zap.String("response_preview", preview(raw)),
-			)
-			return emitFinal(raw, onChunk)
-		}
-
-		final := strings.TrimSpace(firstNonEmpty(decision.FinalAnswer, decision.Final))
-		if final != "" {
-			log.Info("LLM Agent: Final answer selected",
-				zap.Int("step", stepNumber),
-				zap.Bool("tool_executed_this_step", false),
-				zap.Int("answer_bytes", len(final)),
-				zap.String("answer_preview", preview(final)),
-			)
-			return emitFinal(final, onChunk)
-		}
-
-		action := strings.TrimSpace(decision.Action)
-		if action == "" {
-			log.Warn("LLM Agent: JSON decision had no action or final answer",
-				zap.Int("step", stepNumber),
-				zap.String("decision_preview", preview(raw)),
-			)
-			return emitFinal(raw, onChunk)
-		}
-
-		tool, ok := e.tools[action]
-		if !ok {
-			log.Warn("LLM Agent: Requested unavailable tool",
-				zap.Int("step", stepNumber),
-				zap.String("tool", action),
-				zap.Strings("available_tools", toolNames(e.tools)),
-			)
-			working = append(working, domain.Message{
-				Role:    "system",
-				Content: fmt.Sprintf("Tool error: %q is not available. Available tools: %s.", action, strings.Join(toolNames(e.tools), ", ")),
-			})
-			continue
-		}
-
-		input := strings.TrimSpace(firstNonEmpty(decision.ActionInput, decision.Query))
-		if input == "" && !allowsEmptyInput(tool) {
-			log.Warn("LLM Agent: Requested tool with empty input",
-				zap.Int("step", stepNumber),
-				zap.String("tool", action),
-			)
-			working = append(working, domain.Message{
-				Role:    "system",
-				Content: fmt.Sprintf("Tool error: %s requires a non-empty input.", action),
-			})
-			continue
-		}
-
-		log.Info("LLM Agent: Executing tool",
-			zap.Int("step", stepNumber),
-			zap.String("tool", action),
-			zap.String("input", input),
-		)
-		toolStart := time.Now()
-		result, err := tool.Execute(ctx, input)
-		if err != nil {
-			log.Error("LLM Agent: Tool failed",
-				zap.Int("step", stepNumber),
-				zap.String("tool", action),
-				zap.String("input", input),
-				zap.Duration("latency", time.Since(toolStart)),
-				zap.Error(err),
-			)
-			return "", fmt.Errorf("%s failed: %w", action, err)
-		}
-		log.Info("LLM Agent: Tool completed",
-			zap.Int("step", stepNumber),
-			zap.String("tool", action),
-			zap.String("input", input),
-			zap.Duration("latency", time.Since(toolStart)),
-			zap.Int("result_bytes", len(result)),
-		)
-		log.Debug("LLM Agent: Tool result",
-			zap.Int("step", stepNumber),
-			zap.String("tool", action),
-			zap.String("input", input),
-			zap.String("result_preview", preview(result)),
-		)
-
-		working = append(working,
-			domain.Message{Role: "assistant", Content: raw},
-			domain.Message{Role: "system", Content: fmt.Sprintf("Tool result from %s for %q:\n%s", action, input, result)},
-		)
+	agent := agents.NewOneShotAgent(
+		modelProvider.Model(),
+		append([]Tool{}, e.tools...),
+		agents.WithMaxIterations(e.maxAgentSteps),
+		agents.WithPromptPrefix(agentPromptPrefix()),
+	)
+	executor := agents.NewExecutor(agent, agents.WithMaxIterations(e.maxAgentSteps))
+	answer, err := chains.Run(ctx, executor, buildAgentInput(messages))
+	if err != nil {
+		log.Error("LLM Agent: LangChainGo executor failed", zap.Error(err))
+		return "", err
 	}
-
-	working = append(working, domain.Message{
-		Role:    "system",
-		Content: "Agent step limit reached. Provide the final answer now using the conversation and tool results. Do not request another tool call.",
-	})
-	log.Warn("LLM Agent: Step limit reached", zap.Int("max_steps", e.maxAgentSteps))
-	return e.callProvider(ctx, working, onChunk)
+	log.Info("LLM Agent: Completed", zap.Int("answer_bytes", len(answer)), zap.String("answer_preview", preview(answer)))
+	return emitFinal(answer, onChunk)
 }
 
 func (e *Engine) callProvider(ctx context.Context, messages []domain.Message, onChunk func(string) error) (string, error) {
@@ -300,109 +171,6 @@ func (e *Engine) callProvider(ctx context.Context, messages []domain.Message, on
 	return fullResponse, err
 }
 
-func (e *Engine) executeForcedToolCalls(ctx context.Context, working []domain.Message, calls []forcedToolCall, log *zap.Logger) ([]domain.Message, error) {
-	for i, call := range calls {
-		tool, ok := e.tools[call.Name]
-		if !ok {
-			log.Warn("LLM Agent: Required tool unavailable",
-				zap.Int("forced_tool_index", i+1),
-				zap.String("tool", call.Name),
-				zap.String("reason", call.Reason),
-				zap.Strings("available_tools", toolNames(e.tools)),
-			)
-			continue
-		}
-		if strings.TrimSpace(call.Input) == "" && !allowsEmptyInput(tool) {
-			log.Warn("LLM Agent: Required tool skipped because input is empty",
-				zap.Int("forced_tool_index", i+1),
-				zap.String("tool", call.Name),
-				zap.String("reason", call.Reason),
-			)
-			continue
-		}
-
-		log.Info("LLM Agent: Executing required tool",
-			zap.Int("forced_tool_index", i+1),
-			zap.String("tool", call.Name),
-			zap.String("input", call.Input),
-			zap.String("reason", call.Reason),
-		)
-		start := time.Now()
-		result, err := tool.Execute(ctx, call.Input)
-		if err != nil {
-			log.Error("LLM Agent: Required tool failed",
-				zap.Int("forced_tool_index", i+1),
-				zap.String("tool", call.Name),
-				zap.String("input", call.Input),
-				zap.String("reason", call.Reason),
-				zap.Duration("latency", time.Since(start)),
-				zap.Error(err),
-			)
-			return nil, fmt.Errorf("%s failed: %w", call.Name, err)
-		}
-		log.Info("LLM Agent: Required tool completed",
-			zap.Int("forced_tool_index", i+1),
-			zap.String("tool", call.Name),
-			zap.String("input", call.Input),
-			zap.String("reason", call.Reason),
-			zap.Duration("latency", time.Since(start)),
-			zap.Int("result_bytes", len(result)),
-		)
-		log.Debug("LLM Agent: Required tool result",
-			zap.Int("forced_tool_index", i+1),
-			zap.String("tool", call.Name),
-			zap.String("input", call.Input),
-			zap.String("result_preview", preview(result)),
-		)
-
-		working = append(working, domain.Message{
-			Role:    "system",
-			Content: fmt.Sprintf("Required tool result from %s for %q (%s):\n%s", call.Name, call.Input, call.Reason, result),
-		})
-	}
-	return working, nil
-}
-
-func appendAgentInstructions(messages []domain.Message, tools map[string]Tool) []domain.Message {
-	var b strings.Builder
-	b.WriteString("You are an agent. Decide whether a tool is needed before answering. ")
-	b.WriteString("Use web_search for current events, recent facts, or questions that need outside web information. ")
-	b.WriteString("Use current_time for questions asking for the current date or time. ")
-	b.WriteString("When you need a tool, respond only with compact JSON like {\"action\":\"web_search\",\"action_input\":\"search query\"} or {\"action\":\"current_time\",\"action_input\":\"UTC\"}. ")
-	b.WriteString("When you can answer, respond only with compact JSON like {\"final_answer\":\"answer text\"}. ")
-	b.WriteString("Available tools:\n")
-	for _, name := range toolNames(tools) {
-		b.WriteString("- ")
-		b.WriteString(name)
-		b.WriteString(": ")
-		b.WriteString(tools[name].Description())
-		b.WriteByte('\n')
-	}
-
-	return append([]domain.Message{{Role: "system", Content: b.String()}}, messages...)
-}
-
-func parseAgentDecision(raw string) (agentDecision, bool) {
-	text := strings.TrimSpace(raw)
-	text = strings.TrimPrefix(text, "```json")
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSuffix(text, "```")
-	text = strings.TrimSpace(text)
-
-	start := strings.IndexByte(text, '{')
-	end := strings.LastIndexByte(text, '}')
-	if start < 0 || end < start {
-		return agentDecision{}, false
-	}
-	text = text[start : end+1]
-
-	var decision agentDecision
-	if err := json.Unmarshal([]byte(text), &decision); err != nil {
-		return agentDecision{}, false
-	}
-	return decision, true
-}
-
 func emitFinal(content string, onChunk func(string) error) (string, error) {
 	if onChunk != nil {
 		if err := onChunk(content); err != nil {
@@ -412,107 +180,40 @@ func emitFinal(content string, onChunk func(string) error) (string, error) {
 	return content, nil
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
+func agentPromptPrefix() string {
+	return `Answer the following questions as best you can. You have access to the following tools:
+
+{{.tool_descriptions}}
+
+Use current_time for any question asking for the current date, current time, today's date, or time in a location. Never answer current date or time from model memory.
+Use web_search for current events, recent facts, live facts, weather, forecasts, or anything that may have changed recently.`
+}
+
+func buildAgentInput(messages []domain.Message) string {
+	var b strings.Builder
+	for _, msg := range messages {
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
 		}
-	}
-	return ""
-}
-
-func allowsEmptyInput(tool Tool) bool {
-	emptyInputTool, ok := tool.(EmptyInputTool)
-	return ok && emptyInputTool.AllowsEmptyInput()
-}
-
-func inferForcedToolCalls(userMessage string, tools map[string]Tool) []forcedToolCall {
-	text := strings.ToLower(userMessage)
-	calls := []forcedToolCall{}
-
-	needsCurrentTime := asksCurrentTimeOrDate(text)
-	needsWeather := asksWeather(text)
-
-	if needsCurrentTime {
-		if _, ok := tools["current_time"]; ok {
-			calls = append(calls, forcedToolCall{
-				Name:   "current_time",
-				Input:  inferTimezone(text),
-				Reason: "current time/date request",
-			})
+		switch msg.Role {
+		case "system":
+			b.WriteString("System: ")
+		case "assistant":
+			b.WriteString("Assistant: ")
+		default:
+			b.WriteString("User: ")
 		}
+		b.WriteString(content)
+		b.WriteByte('\n')
 	}
-
-	if needsWeather {
-		if _, ok := tools["current_time"]; ok && mentionsRelativeDate(text) && !hasForcedTool(calls, "current_time") {
-			calls = append(calls, forcedToolCall{
-				Name:   "current_time",
-				Input:  inferTimezone(text),
-				Reason: "weather request with relative date",
-			})
-		}
-		if _, ok := tools["web_search"]; ok {
-			calls = append(calls, forcedToolCall{
-				Name:   "web_search",
-				Input:  strings.TrimSpace(userMessage),
-				Reason: "weather/forecast request",
-			})
-		}
-	}
-
-	return calls
+	return strings.TrimSpace(b.String())
 }
 
-func asksCurrentTimeOrDate(text string) bool {
-	if containsAny(text, "weather", "forecast") {
-		return false
-	}
-	return containsAny(text, "current time", "time now", "date today", "today's date", "what day", "what date") ||
-		(containsAny(text, "what time", "what's the time", "what`s the time", "what is the time", "time in ") && containsAny(text, "time")) ||
-		(containsAny(text, "now", "current") && containsAny(text, "time", "date", "day"))
-}
-
-func asksWeather(text string) bool {
-	return containsAny(text, "weather", "forecast", "temperature")
-}
-
-func mentionsRelativeDate(text string) bool {
-	return containsAny(text, "today", "tomorrow", "tonight", "now", "current")
-}
-
-func inferTimezone(text string) string {
-	switch {
-	case containsAny(text, "utc", "gmt"):
-		return "UTC"
-	case containsAny(text, "osaka", "nakanoshima", "tokyo", "japan", "jst"):
-		return "Asia/Tokyo"
-	default:
-		return "Asia/Tokyo"
-	}
-}
-
-func containsAny(text string, values ...string) bool {
-	for _, value := range values {
-		if strings.Contains(text, value) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasForcedTool(calls []forcedToolCall, name string) bool {
-	for _, call := range calls {
-		if call.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func toolNames(tools map[string]Tool) []string {
+func toolNames(tools []Tool) []string {
 	names := make([]string, 0, len(tools))
-	for name := range tools {
-		names = append(names, name)
+	for _, tool := range tools {
+		names = append(names, tool.Name())
 	}
 	sort.Strings(names)
 	return names

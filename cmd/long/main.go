@@ -14,8 +14,8 @@ import (
 	"github.com/pphui8/long/db"
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/handler"
+	"github.com/pphui8/long/llmengine/provider"
 	"github.com/pphui8/long/logger"
-	"github.com/pphui8/long/provider"
 	"github.com/pphui8/long/repository"
 	"github.com/pphui8/long/router"
 	"github.com/pphui8/long/service"
@@ -67,8 +67,7 @@ func main() {
 		provider.GeminiProviderName: "gemini-3.1-flash-lite",
 	}
 	geminiModel, _ := modelRegistry.DefaultModel(provider.GeminiProviderName)
-	chatProvider, err := provider.NewGeminiProvider(context.Background(), service.ProviderConfig{
-		Name:   provider.GeminiProviderName,
+	chatProvider, err := provider.NewGeminiProvider(context.Background(), provider.GeminiConfig{
 		APIKey: os.Getenv("GEMINI_API"),
 		Model:  geminiModel,
 	})

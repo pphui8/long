@@ -6,18 +6,22 @@ import (
 	"fmt"
 
 	"github.com/pphui8/long/domain"
-	"github.com/pphui8/long/service"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/googleai"
 )
 
 const GeminiProviderName = "gemini"
 
+type GeminiConfig struct {
+	APIKey string
+	Model  string
+}
+
 type GeminiProvider struct {
 	llm *googleai.GoogleAI
 }
 
-func NewGeminiProvider(ctx context.Context, cfg service.ProviderConfig) (*GeminiProvider, error) {
+func NewGeminiProvider(ctx context.Context, cfg GeminiConfig) (*GeminiProvider, error) {
 	if cfg.APIKey == "" {
 		return nil, errors.New("gemini API key is required")
 	}
@@ -35,6 +39,10 @@ func NewGeminiProvider(ctx context.Context, cfg service.ProviderConfig) (*Gemini
 
 func (p *GeminiProvider) Name() string {
 	return GeminiProviderName
+}
+
+func (p *GeminiProvider) Model() llms.Model {
+	return p.llm
 }
 
 func (p *GeminiProvider) Stream(ctx context.Context, history []domain.Message, onChunk func(string) error) error {

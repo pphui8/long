@@ -11,12 +11,6 @@ type ChatProvider interface {
 	Stream(ctx context.Context, history []domain.Message, onChunk func(string) error) error
 }
 
-type ProviderConfig struct {
-	Name   string
-	APIKey string
-	Model  string
-}
-
 type ModelRegistry interface {
 	DefaultModel(provider string) (string, bool)
 }

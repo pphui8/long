@@ -24,11 +24,7 @@ func (t *CurrentTimeTool) Description() string {
 	return "Returns the current date and time. Optional input may be an IANA timezone such as Asia/Tokyo or UTC."
 }
 
-func (t *CurrentTimeTool) AllowsEmptyInput() bool {
-	return true
-}
-
-func (t *CurrentTimeTool) Execute(ctx context.Context, input string) (string, error) {
+func (t *CurrentTimeTool) Call(ctx context.Context, input string) (string, error) {
 	_ = ctx
 
 	location := time.Local

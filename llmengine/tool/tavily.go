@@ -43,7 +43,7 @@ func (t *TavilySearchTool) Description() string {
 	return "Searches the live web and returns concise results with titles, URLs, and content snippets."
 }
 
-func (t *TavilySearchTool) Execute(ctx context.Context, input string) (string, error) {
+func (t *TavilySearchTool) Call(ctx context.Context, input string) (string, error) {
 	query := strings.TrimSpace(input)
 	if query == "" {
 		return "", errors.New("search query is required")

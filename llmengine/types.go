@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/pphui8/long/domain"
+	"github.com/tmc/langchaingo/llms"
+	lctools "github.com/tmc/langchaingo/tools"
 	"go.uber.org/zap"
 )
 
@@ -12,13 +14,17 @@ type ChatProvider interface {
 	Stream(ctx context.Context, history []domain.Message, onChunk func(string) error) error
 }
 
+type ModelProvider interface {
+	Model() llms.Model
+}
+
 type Engine struct {
 	contextBuilder ContextBuilder
 	maxAgentSteps  int
 	provider       ChatProvider
 	promptBuilder  PromptBuilder
 	log            *zap.Logger
-	tools          map[string]Tool
+	tools          []Tool
 }
 
 type Option func(*Engine)
@@ -33,12 +39,4 @@ type StreamResult struct {
 	Content string
 }
 
-type Tool interface {
-	Name() string
-	Description() string
-	Execute(ctx context.Context, input string) (string, error)
-}
-
-type EmptyInputTool interface {
-	AllowsEmptyInput() bool
-}
+type Tool = lctools.Tool
