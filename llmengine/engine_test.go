@@ -145,7 +145,7 @@ func TestEngineAgentAllowsEmptyInputTool(t *testing.T) {
 	result, err := engine.Stream(context.Background(), StreamRequest{
 		Username:       "user",
 		ConversationID: 1,
-		History:        []domain.Message{{Role: "user", Content: "What time is it?"}},
+		History:        []domain.Message{{Role: "user", Content: "Use the clock tool."}},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Stream returned error: %v", err)
@@ -183,6 +183,38 @@ func TestEngineAgentForcesCurrentTimeToolForTimeQuestion(t *testing.T) {
 		t.Fatalf("tool input = %q, want Asia/Tokyo", tool.input)
 	}
 	if result.Content != "It is 2026-05-27T21:00:00+09:00." {
+		t.Fatalf("result = %q", result.Content)
+	}
+	if len(provider.calls) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.calls))
+	}
+	lastCall := provider.calls[0]
+	if got := lastCall[len(lastCall)-2].Content; !strings.Contains(got, "Required tool result from current_time") {
+		t.Fatalf("required tool result message = %q", got)
+	}
+}
+
+func TestEngineAgentForcesCurrentTimeToolForTimeInPlaceQuestion(t *testing.T) {
+	provider := &scriptedProvider{responses: []string{`It is 2026-05-28T22:56:00+09:00.`}}
+	tool := &fakeEmptyInputTool{}
+	engine, err := New(provider, WithTools(tool))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	result, err := engine.Stream(context.Background(), StreamRequest{
+		Username:       "user",
+		ConversationID: 1,
+		History:        []domain.Message{{Role: "user", Content: "What`s time in tokyo?"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+
+	if tool.input != "Asia/Tokyo" {
+		t.Fatalf("tool input = %q, want Asia/Tokyo", tool.input)
+	}
+	if result.Content != "It is 2026-05-28T22:56:00+09:00." {
 		t.Fatalf("result = %q", result.Content)
 	}
 	if len(provider.calls) != 1 {

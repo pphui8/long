@@ -468,6 +468,7 @@ func asksCurrentTimeOrDate(text string) bool {
 		return false
 	}
 	return containsAny(text, "current time", "time now", "date today", "today's date", "what day", "what date") ||
+		(containsAny(text, "what time", "what's the time", "what`s the time", "what is the time", "time in ") && containsAny(text, "time")) ||
 		(containsAny(text, "now", "current") && containsAny(text, "time", "date", "day"))
 }
 
