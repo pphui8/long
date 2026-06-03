@@ -78,14 +78,14 @@ jobs:
             docker run -d \
               --name long \
               --restart always \
-              -p 9001:9001 \
-              --add-host=host.docker.internal:host-gateway \
+              --network host \
               -v /app/log/long:/app/log/long \
               -e GIN_MODE=release \
               -e GEMINI_API="$GEMINI_API" \
               -e TABILY_API_KEY="$TABILY_API_KEY" \
               -e JWT_KEY="$JWT_KEY" \
               -e PASSWORD_HASH="$PASSWORD_HASH" \
+              -e MCP_SERVER_URL="http://127.0.0.1:9002/mcp" \
               ghcr.io/${{ github.repository }}:latest
 
         env:

@@ -87,10 +87,7 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 func defaultEngineOptions(log *zap.Logger) ([]llmengine.Option, error) {
 	tools := []llmengine.Tool{}
 
-	mcpServerURL := strings.TrimSpace(os.Getenv("MCP_SERVER_URL"))
-	if mcpServerURL == "" {
-		mcpServerURL = tool.DefaultMCPServerURL
-	}
+	mcpServerURL := tool.MCPServerURL(os.Getenv("MCP_SERVER_URL"))
 	mcpCtx, cancelMCP := context.WithTimeout(context.Background(), mcpStartupTimeout)
 	defer cancelMCP()
 	mcpTools, err := tool.NewMCPTools(mcpCtx, mcpServerURL)

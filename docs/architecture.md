@@ -61,7 +61,7 @@ Configured in `env.yaml`:
 Configured through environment variables:
 
 - `GEMINI_API`: Gemini API key. Required by the Gemini provider configured at startup.
-- `MCP_SERVER_URL`: Optional MCP streamable HTTP endpoint. Defaults to `http://host.docker.internal:9002/mcp`, which lets the Dockerized backend reach an MCP server running on the host.
+- `MCP_SERVER_URL`: Optional MCP streamable HTTP endpoint. Defaults to `http://127.0.0.1:9002/mcp`. The deployment runs the app container with host networking so this reaches the host MCP server.
 - `TABILY_API_KEY`: Tavily/Tabily web search API key. When set, chat also enables the `web_search` tool. The code also accepts `TAVILY_API_KEY`.
 - `JWT_KEY`: HMAC key used to sign JWTs. If absent, current code generates a process-local random key.
 - `PASSWORD_HASH`: HMAC key used to hash/verify passwords. If absent, current code uses a default fallback key.
@@ -219,6 +219,6 @@ See `API.md` for frontend integration details.
 The deployment command:
 
 - Runs the container as `long`.
-- Publishes `9001:9001`.
-- Adds `host.docker.internal` for host access from Linux Docker.
-- Sets `GIN_MODE`, `GEMINI_API`, `TABILY_API_KEY`, `JWT_KEY`, and `PASSWORD_HASH`.
+- Uses host networking so the app can reach host services on `127.0.0.1`, including the MCP server on port `9002`.
+- Sets `GIN_MODE`, `GEMINI_API`, `TABILY_API_KEY`, `JWT_KEY`, `PASSWORD_HASH`, and `MCP_SERVER_URL`.
+- Sets `MCP_SERVER_URL=http://127.0.0.1:9002/mcp` in the deploy command. Port `9002` does not need to be exposed by this app container because MCP traffic is outbound.

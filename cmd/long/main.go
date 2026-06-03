@@ -15,6 +15,7 @@ import (
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/handler"
 	"github.com/pphui8/long/llmengine/provider"
+	"github.com/pphui8/long/llmengine/tool"
 	"github.com/pphui8/long/logger"
 	"github.com/pphui8/long/repository"
 	"github.com/pphui8/long/router"
@@ -29,6 +30,7 @@ const (
 	serverWriteTimeout      = 3 * time.Minute
 	serverIdleTimeout       = 60 * time.Second
 	serverShutdownTimeout   = 2*time.Minute + 15*time.Second
+	mcpConnectivityTimeout  = 5 * time.Second
 )
 
 func main() {
@@ -50,6 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to initialize database", zap.String("host", config.Postgres.Host), zap.Int("port", config.Postgres.Port), zap.Error(err))
 	}
+	logMCPConnectivity(log)
 	defer func() {
 		if err := dbConn.Close(); err != nil {
 			log.Error("Failed to close database", zap.Error(err))
@@ -138,6 +141,26 @@ func main() {
 		log.Error("HTTP server stopped unexpectedly", zap.Error(err))
 	}
 	log.Info("HTTP server stopped")
+}
+
+func logMCPConnectivity(log *zap.Logger) {
+	mcpServerURL := tool.MCPServerURL(os.Getenv("MCP_SERVER_URL"))
+	log.Info("Initializing MCP server connection", zap.String("mcp_server_url", mcpServerURL))
+
+	ctx, cancel := context.WithTimeout(context.Background(), mcpConnectivityTimeout)
+	defer cancel()
+
+	mcpTools, err := tool.NewMCPTools(ctx, mcpServerURL)
+	if err != nil {
+		log.Warn("Failed to connect to MCP server", zap.String("mcp_server_url", mcpServerURL), zap.Error(err))
+		return
+	}
+
+	toolNames := make([]string, 0, len(mcpTools))
+	for _, mcpTool := range mcpTools {
+		toolNames = append(toolNames, mcpTool.Name())
+	}
+	log.Info("Connected to MCP server", zap.String("mcp_server_url", mcpServerURL), zap.Int("tool_count", len(toolNames)), zap.Strings("tools", toolNames))
 }
 
 func loadConfig() (domain.Config, error) {

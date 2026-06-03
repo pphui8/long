@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	DefaultMCPServerURL = "http://host.docker.internal:9002/mcp"
+	DefaultMCPServerURL = "http://127.0.0.1:9002/mcp"
 	defaultMCPTimeout   = 30 * time.Second
 	mcpProtocolVersion  = "2025-06-18"
 )
@@ -46,6 +46,14 @@ func NewMCPTools(ctx context.Context, endpoint string) ([]*MCPTool, error) {
 		return nil, err
 	}
 	return client.ListTools(ctx)
+}
+
+func MCPServerURL(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return DefaultMCPServerURL
+	}
+	return endpoint
 }
 
 func NewMCPClient(endpoint string) (*MCPClient, error) {
@@ -303,10 +311,7 @@ func formatMCPToolResult(result json.RawMessage) (string, error) {
 }
 
 func normalizeMCPServerURL(endpoint string) (string, error) {
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" {
-		endpoint = DefaultMCPServerURL
-	}
+	endpoint = MCPServerURL(endpoint)
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return "", err
