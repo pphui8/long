@@ -88,23 +88,6 @@ func (t *fakeTool) Call(ctx context.Context, input string) (string, error) {
 	return "source says current answer", nil
 }
 
-type fakeTimeTool struct {
-	input string
-}
-
-func (t *fakeTimeTool) Name() string {
-	return "current_time"
-}
-
-func (t *fakeTimeTool) Description() string {
-	return "test time"
-}
-
-func (t *fakeTimeTool) Call(ctx context.Context, input string) (string, error) {
-	t.input = input
-	return "Current time: 2026-05-28T22:56:00+09:00\nTimezone: Asia/Tokyo", nil
-}
-
 func TestEngineStreamsWithoutAgentWhenNoTools(t *testing.T) {
 	provider := &scriptedProvider{responses: []string{"plain answer"}}
 	engine, err := New(provider)
@@ -242,38 +225,6 @@ func TestEngineAgentFallsBackToUnformattedDirectAnswer(t *testing.T) {
 	}
 	if len(model.calls) != 1 {
 		t.Fatalf("model calls = %d, want 1", len(model.calls))
-	}
-}
-
-func TestEngineAgentCanUseCurrentTimeForTimeInPlaceQuestion(t *testing.T) {
-	model := &scriptedModel{responses: []string{
-		"Action: current_time\nAction Input: Asia/Tokyo",
-		"Final Answer: It is 2026-05-28T22:56:00+09:00 in Tokyo.",
-	}}
-	provider := &scriptedModelProvider{
-		scriptedProvider: &scriptedProvider{},
-		model:            model,
-	}
-	tool := &fakeTimeTool{}
-	engine, err := New(provider, WithTools(tool))
-	if err != nil {
-		t.Fatalf("New returned error: %v", err)
-	}
-
-	result, err := engine.Stream(context.Background(), StreamRequest{
-		Username:       "user",
-		ConversationID: 1,
-		History:        []domain.Message{{Role: "user", Content: "What`s time in tokyo?"}},
-	}, nil)
-	if err != nil {
-		t.Fatalf("Stream returned error: %v", err)
-	}
-
-	if tool.input != "Asia/Tokyo" {
-		t.Fatalf("tool input = %q, want Asia/Tokyo", tool.input)
-	}
-	if result.Content != "It is 2026-05-28T22:56:00+09:00 in Tokyo." {
-		t.Fatalf("result = %q", result.Content)
 	}
 }
 

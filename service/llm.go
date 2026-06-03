@@ -21,6 +21,7 @@ import (
 const (
 	conversationSummaryTokenInterval = 15000
 	conversationSummaryTimeout       = 45 * time.Second
+	mcpStartupTimeout                = 5 * time.Second
 	logPreviewLimit                  = 2000
 )
 
@@ -84,7 +85,24 @@ func NewLLMServiceWithProviders(repo repository.LLMRepository, providers []ChatP
 }
 
 func defaultEngineOptions(log *zap.Logger) ([]llmengine.Option, error) {
-	tools := []llmengine.Tool{tool.NewCurrentTimeTool()}
+	tools := []llmengine.Tool{}
+
+	mcpServerURL := strings.TrimSpace(os.Getenv("MCP_SERVER_URL"))
+	if mcpServerURL == "" {
+		mcpServerURL = tool.DefaultMCPServerURL
+	}
+	mcpCtx, cancelMCP := context.WithTimeout(context.Background(), mcpStartupTimeout)
+	defer cancelMCP()
+	mcpTools, err := tool.NewMCPTools(mcpCtx, mcpServerURL)
+	if err != nil {
+		if log != nil {
+			log.Warn("LLM: MCP tools unavailable", zap.String("mcp_server_url", mcpServerURL), zap.Error(err))
+		}
+	} else {
+		for _, mcpTool := range mcpTools {
+			tools = append(tools, mcpTool)
+		}
+	}
 
 	tabilyAPIKey := strings.TrimSpace(os.Getenv("TABILY_API_KEY"))
 	if tabilyAPIKey == "" {
@@ -103,7 +121,7 @@ func defaultEngineOptions(log *zap.Logger) ([]llmengine.Option, error) {
 		toolNames = append(toolNames, configuredTool.Name())
 	}
 	if log != nil {
-		log.Info("LLM: Engine tools configured", zap.Strings("tools", toolNames), zap.Bool("web_search_enabled", tabilyAPIKey != ""))
+		log.Info("LLM: Engine tools configured", zap.Strings("tools", toolNames), zap.String("mcp_server_url", mcpServerURL), zap.Bool("web_search_enabled", tabilyAPIKey != ""))
 	}
 
 	return []llmengine.Option{llmengine.WithLogger(log), llmengine.WithTools(tools...)}, nil

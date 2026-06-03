@@ -61,6 +61,7 @@ Configured in `env.yaml`:
 Configured through environment variables:
 
 - `GEMINI_API`: Gemini API key. Required by the Gemini provider configured at startup.
+- `MCP_SERVER_URL`: Optional MCP streamable HTTP endpoint. Defaults to `http://host.docker.internal:9002/mcp`, which lets the Dockerized backend reach an MCP server running on the host.
 - `TABILY_API_KEY`: Tavily/Tabily web search API key. When set, chat also enables the `web_search` tool. The code also accepts `TAVILY_API_KEY`.
 - `JWT_KEY`: HMAC key used to sign JWTs. If absent, current code generates a process-local random key.
 - `PASSWORD_HASH`: HMAC key used to hash/verify passwords. If absent, current code uses a default fallback key.
@@ -164,7 +165,7 @@ For a new conversation:
 5. The user message is saved.
 6. Full conversation history is loaded.
 7. History is prepared for the LLM engine.
-8. The configured chat provider is called through the LLM engine. The engine can call the built-in `current_time` tool, and when `TABILY_API_KEY` or `TAVILY_API_KEY` is set it can also call the `web_search` tool before streaming the final answer.
+8. The configured chat provider is called through the LLM engine. At startup the engine discovers tools from the configured MCP server, and when `TABILY_API_KEY` or `TAVILY_API_KEY` is set it can also call the `web_search` tool before streaming the final answer.
 9. Each streamed chunk is sent to the frontend as an SSE `data:` event.
 10. The full assistant response is saved after streaming finishes.
 11. A final SSE `done` event is sent with the conversation ID.

@@ -207,7 +207,6 @@ func agentPromptPrefix() string {
 
 {{.tool_descriptions}}
 
-Use current_time for any question asking for the current date, current time, today's date, or time in a location. Never answer current date or time from model memory.
 Use web_search for current events, recent facts, live facts, weather, forecasts, or anything that may have changed recently.`
 }
 
