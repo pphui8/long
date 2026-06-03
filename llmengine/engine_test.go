@@ -209,6 +209,42 @@ func TestEngineAgentReturnsDirectFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestEngineAgentFallsBackToUnformattedDirectAnswer(t *testing.T) {
+	model := &scriptedModel{responses: []string{"Kubernetes service discovery uses Services, DNS, and kube-proxy."}}
+	provider := &scriptedModelProvider{
+		scriptedProvider: &scriptedProvider{},
+		model:            model,
+	}
+	engine, err := New(provider, WithTools(&fakeTool{}))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	var streamed strings.Builder
+	result, err := engine.Stream(context.Background(), StreamRequest{
+		Username:       "user",
+		ConversationID: 1,
+		History:        []domain.Message{{Role: "user", Content: "Explain K8s service discovery"}},
+	}, func(chunk string) error {
+		streamed.WriteString(chunk)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+
+	want := "Kubernetes service discovery uses Services, DNS, and kube-proxy."
+	if result.Content != want {
+		t.Fatalf("result = %q, want %q", result.Content, want)
+	}
+	if streamed.String() != want {
+		t.Fatalf("streamed = %q, want %q", streamed.String(), want)
+	}
+	if len(model.calls) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(model.calls))
+	}
+}
+
 func TestEngineAgentCanUseCurrentTimeForTimeInPlaceQuestion(t *testing.T) {
 	model := &scriptedModel{responses: []string{
 		"Action: current_time\nAction Input: Asia/Tokyo",

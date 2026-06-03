@@ -152,11 +152,33 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 	executor := agents.NewExecutor(agent, agents.WithMaxIterations(e.maxAgentSteps))
 	answer, err := chains.Run(ctx, executor, buildAgentInput(messages))
 	if err != nil {
+		if rawAnswer, ok := agentParseFallback(err); ok {
+			log.Warn("LLM Agent: Using unformatted model output after parse failure",
+				zap.Int("answer_bytes", len(rawAnswer)),
+				zap.String("answer_preview", preview(rawAnswer)),
+			)
+			return emitFinal(rawAnswer, onChunk)
+		}
 		log.Error("LLM Agent: LangChainGo executor failed", zap.Error(err))
 		return "", err
 	}
 	log.Info("LLM Agent: Completed", zap.Int("answer_bytes", len(answer)), zap.String("answer_preview", preview(answer)))
 	return emitFinal(answer, onChunk)
+}
+
+func agentParseFallback(err error) (string, bool) {
+	if !errors.Is(err, agents.ErrUnableToParseOutput) {
+		return "", false
+	}
+
+	const parsePrefix = "unable to parse agent output:"
+	raw := strings.TrimSpace(err.Error())
+	if !strings.HasPrefix(raw, parsePrefix) {
+		return "", false
+	}
+
+	raw = strings.TrimSpace(strings.TrimPrefix(raw, parsePrefix))
+	return raw, raw != ""
 }
 
 func (e *Engine) callProvider(ctx context.Context, messages []domain.Message, onChunk func(string) error) (string, error) {
