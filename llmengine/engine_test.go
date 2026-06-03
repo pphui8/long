@@ -38,8 +38,9 @@ func (p *scriptedModelProvider) Model() llms.Model {
 }
 
 type scriptedModel struct {
-	calls     []string
-	responses []string
+	calls        []string
+	responses    []string
+	streamChunks [][]string
 }
 
 func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -55,6 +56,19 @@ func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.Mes
 	if len(m.responses) > 0 {
 		response = m.responses[0]
 		m.responses = m.responses[1:]
+	}
+	var opts llms.CallOptions
+	for _, option := range options {
+		option(&opts)
+	}
+	if opts.StreamingFunc != nil && len(m.streamChunks) > 0 {
+		chunks := m.streamChunks[0]
+		m.streamChunks = m.streamChunks[1:]
+		for _, chunk := range chunks {
+			if err := opts.StreamingFunc(ctx, []byte(chunk)); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return &llms.ContentResponse{
 		Choices: []*llms.ContentChoice{{Content: response}},
@@ -123,6 +137,9 @@ func TestEngineAgentRunsLangChainGoToolAndReturnsFinalAnswer(t *testing.T) {
 	model := &scriptedModel{responses: []string{
 		"Action: web_search\nAction Input: latest release",
 		"Final Answer: The current answer is grounded.",
+	}, streamChunks: [][]string{
+		{"Action: web_search\nAction Input: latest release"},
+		{"Final ", "Answer: The current ", "answer ", "is grounded."},
 	}}
 	provider := &scriptedModelProvider{
 		scriptedProvider: &scriptedProvider{},

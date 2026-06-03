@@ -10,6 +10,7 @@ import (
 	"github.com/pphui8/long/domain"
 	"github.com/pphui8/long/logger"
 	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/chains"
 	"go.uber.org/zap"
 )
@@ -143,13 +144,15 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 		return "", fmt.Errorf("chat provider %q does not expose a LangChainGo model", e.provider.Name())
 	}
 
+	streamer := newAgentFinalStreamer(onChunk)
 	agent := agents.NewOneShotAgent(
 		modelProvider.Model(),
 		append([]Tool{}, e.tools...),
+		agents.WithCallbacksHandler(streamer),
 		agents.WithMaxIterations(e.maxAgentSteps),
 		agents.WithPromptPrefix(agentPromptPrefix()),
 	)
-	executor := agents.NewExecutor(agent, agents.WithMaxIterations(e.maxAgentSteps))
+	executor := agents.NewExecutor(agent, agents.WithCallbacksHandler(streamer), agents.WithMaxIterations(e.maxAgentSteps))
 	answer, err := chains.Run(ctx, executor, buildAgentInput(messages))
 	if err != nil {
 		if rawAnswer, ok := agentParseFallback(err); ok {
@@ -162,8 +165,53 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 		log.Error("LLM Agent: LangChainGo executor failed", zap.Error(err))
 		return "", err
 	}
+	if streamer.err != nil {
+		return "", streamer.err
+	}
 	log.Info("LLM Agent: Completed", zap.Int("answer_bytes", len(answer)), zap.String("answer_preview", preview(answer)))
+	if streamer.streamed {
+		return answer, nil
+	}
 	return emitFinal(answer, onChunk)
+}
+
+type agentFinalStreamer struct {
+	callbacks.SimpleHandler
+	buffer      string
+	err         error
+	onChunk     func(string) error
+	printOutput bool
+	streamed    bool
+}
+
+func newAgentFinalStreamer(onChunk func(string) error) *agentFinalStreamer {
+	return &agentFinalStreamer{onChunk: onChunk}
+}
+
+func (s *agentFinalStreamer) HandleStreamingFunc(_ context.Context, chunk []byte) {
+	if s.onChunk == nil || s.err != nil {
+		return
+	}
+
+	chunkStr := string(chunk)
+	const keyword = "Final Answer:"
+
+	if !s.printOutput {
+		s.buffer += chunkStr
+		idx := strings.Index(s.buffer, keyword)
+		if idx == -1 {
+			return
+		}
+		chunkStr = strings.TrimLeft(s.buffer[idx+len(keyword):], " ")
+		s.buffer = ""
+		s.printOutput = true
+	}
+	if !s.printOutput || chunkStr == "" {
+		return
+	}
+
+	s.streamed = true
+	s.err = s.onChunk(chunkStr)
 }
 
 func agentParseFallback(err error) (string, bool) {
@@ -179,18 +227,6 @@ func agentParseFallback(err error) (string, bool) {
 
 	raw = strings.TrimSpace(strings.TrimPrefix(raw, parsePrefix))
 	return raw, raw != ""
-}
-
-func (e *Engine) callProvider(ctx context.Context, messages []domain.Message, onChunk func(string) error) (string, error) {
-	var fullResponse string
-	err := e.provider.Stream(ctx, messages, func(chunk string) error {
-		fullResponse += chunk
-		if onChunk == nil {
-			return nil
-		}
-		return onChunk(chunk)
-	})
-	return fullResponse, err
 }
 
 func emitFinal(content string, onChunk func(string) error) (string, error) {
