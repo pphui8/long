@@ -58,6 +58,8 @@ Configured in `env.yaml`:
 - `redis.host`, `redis.port`, `redis.db`, `redis.password`: Redis connection settings.
 - `postgres.host`, `postgres.port`, `postgres.user`, `postgres.password`, `postgres.dbname`, `postgres.sslmode`: Postgres connection settings.
 
+The checked-in `env.yaml` uses `127.0.0.1` for Redis and Postgres because the deployment runs the Docker container with host networking.
+
 Configured through environment variables:
 
 - `GEMINI_API`: Gemini API key. Required by the Gemini provider configured at startup.
