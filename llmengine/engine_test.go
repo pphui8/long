@@ -10,8 +10,9 @@ import (
 )
 
 type scriptedProvider struct {
-	calls     [][]domain.Message
-	responses []string
+	calls        [][]domain.Message
+	responses    []string
+	streamChunks [][]string
 }
 
 func (p *scriptedProvider) Name() string {
@@ -20,6 +21,16 @@ func (p *scriptedProvider) Name() string {
 
 func (p *scriptedProvider) Stream(ctx context.Context, history []domain.Message, onChunk func(string) error) error {
 	p.calls = append(p.calls, append([]domain.Message{}, history...))
+	if len(p.streamChunks) > 0 {
+		chunks := p.streamChunks[0]
+		p.streamChunks = p.streamChunks[1:]
+		for _, chunk := range chunks {
+			if err := onChunk(chunk); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	response := ""
 	if len(p.responses) > 0 {
 		response = p.responses[0]
@@ -133,6 +144,47 @@ func TestEngineStreamsWithoutAgentWhenNoTools(t *testing.T) {
 	}
 }
 
+func TestEngineStreamsWithoutAgentForOrdinaryChatWhenToolsAreConfigured(t *testing.T) {
+	provider := &scriptedModelProvider{
+		scriptedProvider: &scriptedProvider{streamChunks: [][]string{{"plain ", "streaming ", "answer"}}},
+		model:            &scriptedModel{responses: []string{"Final Answer: agent should not run"}},
+	}
+	tool := &fakeTool{}
+	engine, err := New(provider, WithTools(tool))
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	var streamed strings.Builder
+	result, err := engine.Stream(context.Background(), StreamRequest{
+		Username:       "user",
+		ConversationID: 1,
+		History:        []domain.Message{{Role: "user", Content: "Explain channels in Go"}},
+	}, func(chunk string) error {
+		streamed.WriteString(chunk)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+
+	if result.Content != "plain streaming answer" {
+		t.Fatalf("result = %q, want %q", result.Content, "plain streaming answer")
+	}
+	if streamed.String() != result.Content {
+		t.Fatalf("streamed = %q, result = %q", streamed.String(), result.Content)
+	}
+	if len(provider.calls) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.calls))
+	}
+	if len(provider.model.calls) != 0 {
+		t.Fatalf("agent model calls = %d, want 0", len(provider.model.calls))
+	}
+	if tool.input != "" {
+		t.Fatalf("tool input = %q, want empty", tool.input)
+	}
+}
+
 func TestEngineAgentRunsLangChainGoToolAndReturnsFinalAnswer(t *testing.T) {
 	model := &scriptedModel{responses: []string{
 		"Action: web_search\nAction Input: latest release",
@@ -195,7 +247,7 @@ func TestEngineAgentReturnsDirectFinalAnswer(t *testing.T) {
 	result, err := engine.Stream(context.Background(), StreamRequest{
 		Username:       "user",
 		ConversationID: 1,
-		History:        []domain.Message{{Role: "user", Content: "Say hi"}},
+		History:        []domain.Message{{Role: "user", Content: "Do I need the latest news for this?"}},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Stream returned error: %v", err)
@@ -224,7 +276,7 @@ func TestEngineAgentFallsBackToUnformattedDirectAnswer(t *testing.T) {
 	result, err := engine.Stream(context.Background(), StreamRequest{
 		Username:       "user",
 		ConversationID: 1,
-		History:        []domain.Message{{Role: "user", Content: "Explain K8s service discovery"}},
+		History:        []domain.Message{{Role: "user", Content: "Explain recent K8s service discovery changes"}},
 	}, func(chunk string) error {
 		streamed.WriteString(chunk)
 		return nil

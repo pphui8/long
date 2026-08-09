@@ -107,7 +107,7 @@ func (e *Engine) Stream(ctx context.Context, req StreamRequest, onChunk func(str
 	}
 
 	var fullResponse string
-	if len(e.tools) == 0 {
+	if len(e.tools) == 0 || !needsToolRouting(messages) {
 		if err := e.provider.Stream(ctx, messages, func(chunk string) error {
 			fullResponse += chunk
 			if onChunk == nil {
@@ -173,6 +173,36 @@ func (e *Engine) runAgent(ctx context.Context, messages []domain.Message, onChun
 		return answer, nil
 	}
 	return emitFinal(answer, onChunk)
+}
+
+func needsToolRouting(messages []domain.Message) bool {
+	lastUser := strings.ToLower(lastUserMessage(messages))
+	liveSignals := []string{
+		"current",
+		"latest",
+		"recent",
+		"today",
+		"tomorrow",
+		"yesterday",
+		"now",
+		"news",
+		"weather",
+		"forecast",
+		"stock",
+		"price",
+		"exchange rate",
+		"schedule",
+		"score",
+		"standings",
+		"web",
+		"search",
+	}
+	for _, signal := range liveSignals {
+		if strings.Contains(lastUser, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 type agentFinalStreamer struct {

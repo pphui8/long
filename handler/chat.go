@@ -143,6 +143,8 @@ func (a *App) HandleChat(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("Transfer-Encoding", "chunked")
+	c.Header("X-Accel-Buffering", "no")
+	c.Header("X-Content-Type-Options", "nosniff")
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
